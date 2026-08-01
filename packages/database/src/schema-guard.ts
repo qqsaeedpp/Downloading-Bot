@@ -62,6 +62,8 @@ export async function assertEnumCovers(
   if (report.missing.length === 0) return;
   throw new Error(
     `Database enum "${enumName}" is missing ${report.missing.map((value) => `"${value}"`).join(', ')}. ` +
-      `Pending migrations have not been applied — run \`docker compose run --rm migrate\`.`,
+      `The schema is behind the code. Either the migration has not been applied, or the ` +
+      `migrate image predates it — rebuild every service (\`docker compose build --no-cache\`, ` +
+      `with no service list) and re-run \`docker compose run --rm migrate\`.`,
   );
 }

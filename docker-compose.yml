@@ -106,7 +106,14 @@ services:
   # One-shot. Migrations must not run from the services themselves: two
   # replicas booting at once would race on the same DDL, and a failed migration
   # should stop a deploy rather than crash-loop a bot.
+  #
+  # It shares the WORKER'S IMAGE TAG deliberately. Without an explicit `image:`,
+  # Compose derives a separate name per service, so `docker compose build
+  # bot worker` left this one holding whatever it was built with last — and a
+  # stale migrate image finds no pending migrations and exits 0, silently. One
+  # tag means the two cannot drift apart.
   migrate:
+    image: ${WORKER_IMAGE:-telegram-tools-bot-worker:local}
     build:
       context: .
       dockerfile: Dockerfile.worker
@@ -151,6 +158,8 @@ services:
     networks: [internal]
 
   worker:
+    # Same tag as `migrate`; see the comment there.
+    image: ${WORKER_IMAGE:-telegram-tools-bot-worker:local}
     build:
       context: .
       dockerfile: Dockerfile.worker

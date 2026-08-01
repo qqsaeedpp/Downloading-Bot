@@ -251,6 +251,11 @@ docker compose build --build-arg YTDLP_VERSION=2026.08.01
 docker compose up -d
 ```
 
+> Always build with **no service list**. `docker compose build bot worker`
+> leaves the `migrate` service on its previous image, which then finds no
+> pending migrations and exits 0 — a deploy that looks clean while the schema
+> stays behind.
+
 Never enable unattended updates in production: a yt-dlp release can change
 format selection behaviour, and you want that to be a decision.
 

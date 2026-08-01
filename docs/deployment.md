@@ -102,13 +102,24 @@ mkdir -p secrets
 ## 2. Bring it up
 
 ```bash
-docker compose build
+docker compose build          # no service list — see the warning below
 docker compose up -d
 docker compose ps
 ```
 
 Expected steady state: `postgres` and `redis` healthy, `migrate` exited 0, `bot`
 and `worker` running and healthy.
+
+> **Build every service, not a subset.** `docker compose build bot worker`
+> looks complete and is not: `migrate` is a separate service, so it keeps
+> whatever image it was last built with. A stale migrate image contains an older
+> `infra/migrations/`, finds nothing pending, and **exits 0** — so the deploy
+> looks clean while the schema silently stays a version behind. `migrate` and
+> `worker` now share one image tag to make this much harder, but the habit of
+> passing no service list is the reliable protection.
+>
+> `migrate` verifies the platform enum after running and exits non-zero if the
+> schema is still behind, so this failure now announces itself.
 
 ## 3. Migrations
 
