@@ -44,14 +44,25 @@ export function buildBaseArgs(input: BaseArgsInput): string[] {
   return args;
 }
 
-export function buildInspectArgs(input: BaseArgsInput): string[] {
+export interface InspectArgsInput extends BaseArgsInput {
+  /**
+   * Only for platforms that genuinely publish stills.
+   *
+   * The flag lets an image-only pin return JSON instead of aborting with "No
+   * video formats found". On a video-only platform it does the opposite of what
+   * we want: it converts a real extraction failure into a document with
+   * metadata and an empty `formats`, which is indistinguishable from a photo
+   * post and hides the reason from the user entirely.
+   */
+  readonly ignoreNoFormatsError: boolean;
+}
+
+export function buildInspectArgs(input: InspectArgsInput): string[] {
   return [
     ...buildBaseArgs(input),
     '--dump-single-json',
     '--skip-download',
-    // Lets an image-only post return JSON instead of aborting with "No video
-    // formats found"; classifying image-vs-video is our job, not yt-dlp's.
-    '--ignore-no-formats-error',
+    ...(input.ignoreNoFormatsError ? ['--ignore-no-formats-error'] : []),
   ];
 }
 

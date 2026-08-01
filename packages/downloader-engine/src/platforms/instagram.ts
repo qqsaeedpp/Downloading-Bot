@@ -31,6 +31,7 @@ export const instagramPlatform: PlatformDefinition = {
       platform: MediaPlatform.Instagram,
       preferProgressive: true,
       imageFirst: false,
+      servesStandaloneImages: true,
       supportsAudioExtraction: true,
       retryWithoutCookies: true,
       shortLinkHosts: ['ig.me'],

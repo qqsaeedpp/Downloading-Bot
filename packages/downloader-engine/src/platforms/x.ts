@@ -31,6 +31,7 @@ export const xPlatform: PlatformDefinition = {
       platform: MediaPlatform.X,
       preferProgressive: false,
       imageFirst: false,
+      servesStandaloneImages: true,
       supportsAudioExtraction: true,
       // X answers a dead session with the same "content is not available" it
       // uses for a genuinely gated post, so an anonymous second attempt is the

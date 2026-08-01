@@ -34,6 +34,10 @@ describe('hasExtractableAudio', () => {
     // download that yt-dlp could only answer with "No video could be found".
     expect(hasExtractableAudio([], MediaKind.Unknown)).toBe(false);
     expect(hasExtractableAudio([], MediaKind.Image)).toBe(false);
+    // Including when the kind is genuinely video: a blocked YouTube extraction
+    // reports a duration and no renditions, and there is nothing to extract
+    // a soundtrack from.
+    expect(hasExtractableAudio([], MediaKind.Video)).toBe(false);
   });
 
   it('says no when every format explicitly declares no audio track', () => {

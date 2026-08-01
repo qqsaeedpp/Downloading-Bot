@@ -112,6 +112,7 @@ export class YtDlpMediaEngine implements MediaEngine {
               args: buildInspectArgs({
                 cookiePath,
                 platformExtraArgs: policy.extraArgs,
+                ignoreNoFormatsError: policy.servesStandaloneImages,
               }),
               signal: scope.signal,
             });
@@ -121,6 +122,7 @@ export class YtDlpMediaEngine implements MediaEngine {
               sourceUrl: request.url,
               platform: request.platform,
               obtainedWithCookies: effectiveCookies !== undefined,
+              canBeImage: policy.servesStandaloneImages,
             });
           }),
       );
@@ -157,10 +159,15 @@ export class YtDlpMediaEngine implements MediaEngine {
       ? this.#selector.listAudioOptions(info.formats, info.durationSeconds, info.mediaKind)
       : [];
 
-    // A video post with no usable rendition is not a failure yet — the download
-    // chain's lenient tail may still find something — so offer a single "best"
-    // entry rather than an empty keyboard.
-    if (video.length === 0 && info.mediaKind === MediaKind.Video) {
+    // A video post whose renditions are present but unlabelled is not a failure
+    // yet — Instagram's pre-muxed file has no height at all, and the download
+    // chain's lenient tail will still find it — so offer a single "best" entry.
+    //
+    // `formats.length > 0` is the load-bearing part. With NO formats there is
+    // nothing to fall back to, and a "best" button would queue a job yt-dlp is
+    // guaranteed to refuse. That is the state a blocked YouTube extraction
+    // leaves behind.
+    if (video.length === 0 && info.mediaKind === MediaKind.Video && info.formats.length > 0) {
       return [
         {
           id: 'vbest',

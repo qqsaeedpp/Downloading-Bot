@@ -85,7 +85,10 @@ describe('job workspaces', () => {
 
     // Nothing is old enough yet.
     expect(await factory.removeOrphans(60_000)).toBe(0);
-    // Everything is, at a zero-age cutoff.
+    // A zero-age cutoff is `Date.now()`, and a directory created microseconds
+    // ago can carry exactly that mtime on a coarse filesystem clock — so give
+    // it a moment rather than race the boundary.
+    await delay(30);
     expect(await factory.removeOrphans(0)).toBe(1);
     expect(await readdir(root)).toHaveLength(0);
   });

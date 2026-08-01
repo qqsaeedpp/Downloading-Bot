@@ -14,6 +14,8 @@ export interface MapInfoContext {
   readonly sourceUrl: string;
   readonly platform: MediaPlatform;
   readonly obtainedWithCookies: boolean;
+  /** From the platform policy; false for video-only platforms. */
+  readonly canBeImage: boolean;
 }
 
 /**
@@ -62,7 +64,10 @@ export class YtDlpInfoMapper {
         likeCount: info.like_count,
         commentCount: info.comment_count,
       },
-      mediaKind: classifyMediaKind(formats, info, thumbnails.length),
+      mediaKind: classifyMediaKind(formats, info, {
+        thumbnailCount: thumbnails.length,
+        canBeImage: context.canBeImage,
+      }),
       obtainedWithCookies: context.obtainedWithCookies,
       formats,
     };
@@ -127,10 +132,16 @@ function toEngineFormat(raw: RawFormat): EngineMediaFormat {
  * matters: it has no formats worth showing, and offering a quality menu for it
  * produces an empty keyboard.
  */
+export interface ClassifyOptions {
+  readonly thumbnailCount?: number;
+  /** False for platforms that only ever serve video, such as YouTube. */
+  readonly canBeImage?: boolean;
+}
+
 export function classifyMediaKind(
   formats: readonly EngineMediaFormat[],
   info: Pick<RawInfo, 'thumbnail' | 'ext' | 'duration'>,
-  thumbnailCount = 0,
+  options: ClassifyOptions = {},
 ): MediaKind {
   const hasVideo = formats.some((format) => format.isProgressive || format.isVideoOnly);
   if (hasVideo) return MediaKind.Video;
@@ -138,13 +149,25 @@ export function classifyMediaKind(
   const hasAudio = formats.some((format) => format.isAudioOnly);
   if (hasAudio) return MediaKind.Audio;
 
+  // A still has no duration. So a post that reports one is timed media whose
+  // formats we simply failed to read — not a picture.
+  //
+  // This is what a blocked YouTube extraction looks like: the title, uploader
+  // and view count survive because they come from the initial page data, while
+  // `formats` is empty because the player response was gated. Every YouTube
+  // video also has a thumbnail, so without this rule a 36-minute video was
+  // classified as an image and offered with a single "download picture" button.
+  if (info.duration !== undefined && info.duration > 0) return MediaKind.Video;
+
+  if (options.canBeImage === false) return MediaKind.Unknown;
+
   const imageExtensions = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
   const looksLikeImage =
     info.thumbnail !== undefined ||
     // A photo tweet comes back with an empty `formats` array and its images in
     // `thumbnails`. Reading only the singular `thumbnail` is what left those
     // posts classified as `unknown`, which in turn let the audio ladder run.
-    thumbnailCount > 0 ||
+    (options.thumbnailCount ?? 0) > 0 ||
     (info.ext !== undefined && imageExtensions.has(info.ext.toLowerCase())) ||
     formats.some((format) => imageExtensions.has(format.ext.toLowerCase()));
 

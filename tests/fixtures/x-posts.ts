@@ -162,6 +162,57 @@ export const X_MIXED_MEDIA_POST = {
   ],
 };
 
+/**
+ * What `--ignore-no-formats-error` turns a blocked YouTube extraction into.
+ *
+ * The metadata survives because it comes from the initial page data; `formats`
+ * is empty because the player response — which carries them — was gated behind
+ * "Sign in to confirm you're not a bot", which is what YouTube commonly answers
+ * a datacentre IP with. Every field here is real except the identifiers.
+ *
+ * This shape is why a 36-minute video was offered as a still image: the
+ * classifier saw no video formats, saw a thumbnail, and concluded "image".
+ */
+export const YOUTUBE_BLOCKED_NO_FORMATS = {
+  id: '9BrUmidnzo0',
+  title: 'بهترین و کمیاب‌ترین موبایل‌های دنیا!!!',
+  uploader: 'Kouman',
+  channel: 'Kouman',
+  duration: 2200,
+  thumbnail: 'https://i.ytimg.test/vi/9BrUmidnzo0/maxresdefault.jpg',
+  upload_date: '20260115',
+  view_count: 758_503,
+  like_count: 77_925,
+  extractor: 'youtube',
+  webpage_url: 'https://www.youtube.com/watch?v=9BrUmidnzo0',
+  formats: [],
+  thumbnails: [{ url: 'https://i.ytimg.test/vi/9BrUmidnzo0/hq720.jpg', width: 1280, height: 720 }],
+};
+
+/** A YouTube Short: same shape as a long video, just briefer. */
+export const YOUTUBE_SHORT = {
+  id: 'sH0rt1dAbCd',
+  title: 'A YouTube Short',
+  uploader: 'Some Channel',
+  duration: 42,
+  thumbnail: 'https://i.ytimg.test/vi/sH0rt1dAbCd/maxresdefault.jpg',
+  extractor: 'youtube',
+  webpage_url: 'https://www.youtube.com/shorts/sH0rt1dAbCd',
+  formats: [
+    {
+      format_id: '18',
+      ext: 'mp4',
+      width: 720,
+      height: 1280,
+      vcodec: 'avc1.42001E',
+      acodec: 'mp4a.40.2',
+      filesize: 3_500_000,
+      tbr: 660,
+      abr: 96,
+    },
+  ],
+};
+
 /** A YouTube video, for the platform-parity assertions. */
 export const YOUTUBE_VIDEO = {
   id: 'dQw4w9WgXcQ',

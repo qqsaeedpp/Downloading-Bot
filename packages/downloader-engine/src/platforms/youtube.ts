@@ -92,6 +92,10 @@ export const youtubePlatform: PlatformDefinition = {
       // they should; there is no unlabelled pre-muxed file to shortcut to.
       preferProgressive: false,
       imageFirst: false,
+      // YouTube never serves a standalone still. Saying so is what keeps a
+      // blocked extraction from being mistaken for a photo, and what lets the
+      // real "sign in to confirm you're not a bot" reach the user.
+      servesStandaloneImages: false,
       supportsAudioExtraction: true,
       // A YouTube bot check is answered BY cookies, so dropping them and trying
       // again is the one thing guaranteed not to help.

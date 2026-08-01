@@ -64,6 +64,7 @@ export const pinterestPlatform: PlatformDefinition = {
       // The overwhelming majority of pins are stills, and a pin that does carry
       // video still has an image worth offering.
       imageFirst: true,
+      servesStandaloneImages: true,
       supportsAudioExtraction: false,
       retryWithoutCookies: false,
       shortLinkHosts: PINTEREST_SHORT_HOSTS,

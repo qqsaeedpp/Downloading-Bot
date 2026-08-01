@@ -29,6 +29,21 @@ export interface PlatformDownloadPolicy {
   /** Treat a still image as the primary product, not as a fallback. */
   readonly imageFirst: boolean;
 
+  /**
+   * Whether a post on this platform can legitimately BE a standalone still.
+   *
+   * Two things hang off this, and both went wrong when it did not exist:
+   *
+   * - It gates `--ignore-no-formats-error` during inspection. That flag exists
+   *   so an image-only pin returns JSON instead of aborting — but on a platform
+   *   that only ever serves video it converts a real failure ("Sign in to
+   *   confirm you're not a bot") into a silent document with no formats.
+   * - It gates the image classification. Every YouTube video has a thumbnail,
+   *   so "no video formats + a thumbnail" was read as "this is an image", and a
+   *   36-minute video was offered as a picture.
+   */
+  readonly servesStandaloneImages: boolean;
+
   /** Whether offering an audio-only download makes sense at all. */
   readonly supportsAudioExtraction: boolean;
 

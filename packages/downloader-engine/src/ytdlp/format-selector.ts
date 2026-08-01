@@ -13,6 +13,11 @@ export function hasExtractableAudio(
   formats: readonly EngineMediaFormat[],
   mediaKind: MediaKind,
 ): boolean {
+  // 0. Nothing to extract FROM. A blocked YouTube extraction returns metadata,
+  //    a duration and no formats at all; the kind is legitimately "video", but
+  //    there is no rendition to pull a soundtrack out of.
+  if (formats.length === 0) return false;
+
   // 1. Positive evidence: something declares a real audio codec.
   if (formats.some((format) => format.audioCodec !== undefined && format.audioCodec !== 'none'))
     return true;

@@ -54,10 +54,21 @@ describe('buildInspectArgs', () => {
     expect(args).toContain('--skip-download');
   });
 
-  it('tolerates a post with no video formats', () => {
+  it('tolerates a post with no video formats on platforms that serve stills', () => {
     // Lets an image-only pin return JSON instead of aborting with "No video
     // formats found"; classifying image-vs-video is our job.
-    expect(buildInspectArgs(base)).toContain('--ignore-no-formats-error');
+    expect(buildInspectArgs({ ...base, ignoreNoFormatsError: true })).toContain(
+      '--ignore-no-formats-error',
+    );
+  });
+
+  it('does NOT tolerate it on a video-only platform', () => {
+    // On YouTube the flag turns a real failure — "Sign in to confirm you're not
+    // a bot" — into a document with metadata and no formats, which reads as a
+    // photo post and hides the reason from the user entirely.
+    expect(buildInspectArgs({ ...base, ignoreNoFormatsError: false })).not.toContain(
+      '--ignore-no-formats-error',
+    );
   });
 });
 

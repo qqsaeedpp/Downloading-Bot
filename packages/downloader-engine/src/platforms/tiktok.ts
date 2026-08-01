@@ -36,6 +36,7 @@ export const tiktokPlatform: PlatformDefinition = {
       // is already H.264 — no shortcut needed.
       preferProgressive: false,
       imageFirst: false,
+      servesStandaloneImages: true,
       supportsAudioExtraction: true,
       // TikTok serves public videos fine without a session, and a bad session
       // does not produce the distinctive failure Instagram does.
