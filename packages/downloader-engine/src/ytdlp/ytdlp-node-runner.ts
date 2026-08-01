@@ -21,11 +21,35 @@ const execFileAsync = promisify(execFile);
  */
 const PROGRESS_LINE_PREFIX = '~ytdlp-progress-';
 
+/**
+ * The `execFile` shape the inspection path depends on. Injectable for the same
+ * reason `RedirectResolver` takes a `fetchImpl`: it is the only way to assert
+ * on the argument vector without spawning a real binary.
+ */
+export type ExecFileAsync = (
+  file: string,
+  args: readonly string[],
+  options: {
+    readonly maxBuffer: number;
+    readonly windowsHide: boolean;
+    readonly signal?: AbortSignal;
+  },
+) => Promise<{ stdout: string; stderr: string }>;
+
 export interface YtDlpNodeRunnerOptions {
   readonly binaryPath: string;
+  /**
+   * Only ever used for downloads. Metadata extraction does not decode, mux or
+   * re-encode anything, so a process that only inspects — the bot — is not
+   * required to have FFmpeg on disk at all.
+   */
   readonly ffmpegPath: string;
   readonly logger: Logger;
+  readonly execFileImpl?: ExecFileAsync;
 }
+
+/** yt-dlp's JSON can be large on a long video; a small buffer turns success into ENOBUFS. */
+const INSPECT_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 
 /**
  * The one place `ytdlp-nodejs` is used.
@@ -62,30 +86,35 @@ export class YtDlpNodeRunner implements YtDlpRunner {
     return this.#ytdlp;
   }
 
+  /**
+   * Metadata extraction, run directly through `execFile`.
+   *
+   * Deliberately NOT routed through `ytdlp-nodejs`. Its builders stat the
+   * FFmpeg binary on construction and append `--ffmpeg-location` to every
+   * invocation, which made `yt-dlp --dump-single-json` — an operation that
+   * touches no media whatsoever — fail in the bot container purely because that
+   * container has no reason to ship FFmpeg. The library still owns the download
+   * path, where its progress parsing and `kill()` genuinely earn their keep.
+   *
+   * `execFile`, never `exec`: the URL is remote input and the latter would hand
+   * it to a shell. The argument vector ends with `--` so a URL beginning with a
+   * dash cannot be read as a flag.
+   */
   async dumpJson(invocation: YtDlpInvocation): Promise<YtDlpResult> {
-    const builder = this.#client.exec(invocation.url, {});
-    builder.setBinaryPath(this.#options.binaryPath);
-    builder.setFfmpegPath(this.#options.ffmpegPath);
-    builder.addArgs(...invocation.args);
+    const exec = this.#options.execFileImpl ?? execFileAsync;
+    const args = [...invocation.args, '--', invocation.url];
 
-    const detach = attachAbort(builder, invocation.signal);
-    let stderr = '';
-    builder.on('stderr', (chunk: string) => {
-      stderr += chunk;
-    });
+    this.#options.logger.debug('inspecting media', { url: redactUrl(invocation.url) });
 
     try {
-      const result = await builder.exec();
-      return {
-        stdout: stripProgressLines(result.stdout),
-        stderr: result.stderr,
-        exitCode: result.exitCode,
-        filePaths: result.filePaths ?? [],
-      };
+      const { stdout, stderr } = await exec(this.#options.binaryPath, args, {
+        maxBuffer: INSPECT_MAX_BUFFER_BYTES,
+        windowsHide: true,
+        ...(invocation.signal === undefined ? {} : { signal: invocation.signal }),
+      });
+      return { stdout: stripProgressLines(stdout), stderr, exitCode: 0, filePaths: [] };
     } catch (error: unknown) {
-      throw this.#toProcessError(error, stderr, invocation.signal);
-    } finally {
-      detach();
+      throw this.#toProcessError(error, readStderr(error), invocation.signal);
     }
   }
 
@@ -154,8 +183,29 @@ export class YtDlpNodeRunner implements YtDlpRunner {
       return new YtDlpProcessError(null, 'SIGKILL', stderr, { cause: reason });
     }
     const message = error instanceof Error ? error.message : String(error);
-    return new YtDlpProcessError(1, null, stderr === '' ? message : stderr, { cause: error });
+    return new YtDlpProcessError(readExitCode(error), null, stderr === '' ? message : stderr, {
+      cause: error,
+    });
   }
+}
+
+/**
+ * `execFile` rejects with an Error carrying the child's output. Read it
+ * defensively: the fields are untyped, and the error mapper depends on stderr
+ * being whatever yt-dlp actually printed.
+ */
+function readStderr(error: unknown): string {
+  if (typeof error !== 'object' || error === null) return '';
+  const stderr = (error as { stderr?: unknown }).stderr;
+  if (typeof stderr === 'string') return stderr;
+  if (Buffer.isBuffer(stderr)) return stderr.toString('utf8');
+  return '';
+}
+
+function readExitCode(error: unknown): number | null {
+  if (typeof error !== 'object' || error === null) return 1;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'number' ? code : 1;
 }
 
 interface KillableBuilder {

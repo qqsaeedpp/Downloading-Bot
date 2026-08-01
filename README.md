@@ -1,7 +1,7 @@
 # telegram-tools-bot
 
 A production-shaped Telegram bot that downloads media from **Instagram**,
-**TikTok**, **Pinterest** and **X / Twitter**.
+**TikTok**, **Pinterest**, **X / Twitter** and **YouTube**.
 
 Send it a link. It shows you what the post is, offers the qualities the source
 actually has, and delivers the file — normalised so it plays inline rather than
@@ -14,8 +14,11 @@ second and tenth tool as much as for this one.
 
 ## What it does
 
-- **Four platforms**, each with its own download policy rather than a scattered
+- **Five platforms**, each with its own download policy rather than a scattered
   `switch`. Short links (`vm.tiktok.com`, `pin.it`, `t.co`) are resolved safely.
+  A platform may also declare a canonical URL shape: YouTube collapses
+  `youtu.be`, `/shorts`, `/embed`, `/live`, `music.` and timestamp links onto one
+  `watch?v=<id>`, so the same video shared six ways is one cache entry.
 - **Real quality menus** — heights the source genuinely offers, with an audio
   ladder capped by what the source can support. It will not offer you 320 kbps
   for a 64 kbps track.
@@ -74,7 +77,7 @@ rejected, is in [docs/architecture.md](./docs/architecture.md).
 | PostgreSQL       | 17               | provided by Compose                     |
 | Redis            | 7                | provided by Compose                     |
 | yt-dlp           | pinned per image | see [updating yt-dlp](#updating-yt-dlp) |
-| FFmpeg + ffprobe | any current      | installed in the worker image           |
+| FFmpeg + ffprobe | any current      | worker image only; the bot has neither  |
 
 ---
 
@@ -111,8 +114,11 @@ curl -fsS http://127.0.0.1:3001/health/ready | jq
 curl -fsS http://127.0.0.1:3002/health/ready | jq
 ```
 
-The worker's readiness probe checks Postgres, Redis, the three binaries, and
-that the download directory is writable.
+The worker's readiness probe checks Postgres, Redis, the three binaries
+(yt-dlp, ffmpeg, ffprobe) and that the download directory is writable. The
+bot's checks Postgres, Redis and **yt-dlp only** — it inspects but never
+decodes, so asserting FFmpeg there would fail a container that is working
+perfectly.
 
 ---
 
@@ -129,7 +135,8 @@ npm run dev:worker    # terminal 2
 ```
 
 The worker needs `yt-dlp`, `ffmpeg` and `ffprobe` on `PATH`, or set
-`YTDLP_PATH` / `FFMPEG_PATH` / `FFPROBE_PATH`.
+`YTDLP_PATH` / `FFMPEG_PATH` / `FFPROBE_PATH`. The bot needs only `yt-dlp`:
+metadata extraction runs it directly through `execFile` and touches no media.
 
 | Command                    | What it does                                                 |
 | -------------------------- | ------------------------------------------------------------ |
@@ -217,6 +224,10 @@ authenticated attempt failed in a way that suggests an expired session; retrying
 A stale session is _worse_ than none — Instagram answers an invalidated
 `sessionid` with a flat 404 on a reel that resolves fine anonymously — so the
 bot retries once without cookies and tells you to refresh the file.
+
+That retry is per-platform (`retryWithoutCookies`), and YouTube switches it off:
+its "Sign in to confirm you're not a bot" check is answered _by_ cookies, so
+dropping them and trying again is the one thing guaranteed not to help.
 
 ---
 
@@ -313,8 +324,16 @@ production:
 - **Extractors are fragile by nature.** A site redesign can break a platform
   overnight. That is a property of the problem, not of this code; the smoke
   workflow exists to tell you quickly.
-- **Carousels take the first item.** A multi-image Instagram post downloads its
-  first entry. Choosing between items needs UI that phase one does not have.
+- **Carousels take the first item.** A multi-image Instagram post, or a tweet
+  with four photos, downloads its first entry. Choosing between items needs UI
+  that phase one does not have.
+- **YouTube playlists are not downloaded.** A link carrying `list=` is collapsed
+  to the single video it explicitly names before it reaches yt-dlp, so pasting a
+  playlist link gets you that one video and not two hundred.
+- **The bot image has no FFmpeg, deliberately.** Inspection runs
+  `yt-dlp --dump-single-json`, which decodes nothing, so the dependency would buy
+  nothing and invite the bot to start doing work that belongs in the worker.
+  `docker compose exec bot which ffmpeg` failing is the design, not a fault.
 - **50 MB without a local Bot API server.** Larger files require running your
   own, which is a deployment decision this repo documents but does not automate.
 - **No retention policy.** Job rows persist until deleted. Add one before

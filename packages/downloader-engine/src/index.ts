@@ -46,6 +46,7 @@ export { instagramPlatform } from './platforms/instagram.js';
 export { tiktokPlatform } from './platforms/tiktok.js';
 export { pinterestPlatform } from './platforms/pinterest.js';
 export { xPlatform } from './platforms/x.js';
+export { extractYouTubeVideoId, youtubePlatform } from './platforms/youtube.js';
 
 export { UrlGuard, normalizeUrl } from './security/url-guard.js';
 export type { SafeMediaUrl } from './security/url-guard.js';
@@ -68,6 +69,7 @@ export { withCookieFile } from './cookies/cookie-file.js';
 
 export {
   YtDlpFormatSelector,
+  hasExtractableAudio,
   parseRequestedBitrate,
   parseRequestedHeight,
 } from './ytdlp/format-selector.js';

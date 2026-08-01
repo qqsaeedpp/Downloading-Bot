@@ -7,12 +7,14 @@ import type { PlatformDefinition } from './platform-definition.js';
 import { matchesAnyPattern } from './platform-definition.js';
 import { tiktokPlatform } from './tiktok.js';
 import { xPlatform } from './x.js';
+import { youtubePlatform } from './youtube.js';
 
 export const DEFAULT_PLATFORM_DEFINITIONS: readonly PlatformDefinition[] = [
   instagramPlatform,
   tiktokPlatform,
   pinterestPlatform,
   xPlatform,
+  youtubePlatform,
 ];
 
 export interface PlatformRegistry {

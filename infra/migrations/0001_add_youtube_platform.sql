@@ -1,0 +1,11 @@
+-- Adds the `youtube` value to the media_platform enum.
+--
+-- `IF NOT EXISTS` so that a hand-run against a database that already has the
+-- value is a no-op rather than an error. Drizzle's journal already prevents a
+-- second automated run; this covers the manual case.
+--
+-- PostgreSQL 12+ permits ALTER TYPE ... ADD VALUE inside a transaction (which is
+-- how the migrator runs it) provided the new value is not *used* in the same
+-- transaction. Nothing here does, so this is safe. On PostgreSQL 11 and older it
+-- would have to run outside one — the compose file pins 17.
+ALTER TYPE "public"."media_platform" ADD VALUE IF NOT EXISTS 'youtube';

@@ -1,7 +1,7 @@
-import { DownloadStage, DownloadType } from '@tgtools/shared';
+import { ALL_MEDIA_PLATFORMS, DownloadStage, DownloadType } from '@tgtools/shared';
 import { describe, expect, it } from 'vitest';
 import { DownloadFailureCode } from '../../../domain/errors/download-failure-code.js';
-import { PLATFORM_LABELS_FA, fa, toPersianDigits } from './fa.js';
+import { PLATFORM_LABELS_FA, fa, supportedPlatformsFa, toPersianDigits } from './fa.js';
 
 describe('the Persian message table', () => {
   it('has a sentence for every failure code', () => {
@@ -22,12 +22,32 @@ describe('the Persian message table', () => {
   });
 
   it('has a label for every supported platform', () => {
-    expect(Object.keys(PLATFORM_LABELS_FA).sort()).toEqual([
-      'instagram',
-      'pinterest',
-      'tiktok',
-      'x',
-    ]);
+    // Derived from the vocabulary rather than hard-coded, so adding a platform
+    // fails here instead of rendering its raw slug to a Persian-speaking user.
+    expect(Object.keys(PLATFORM_LABELS_FA).sort()).toEqual([...ALL_MEDIA_PLATFORMS].sort());
+    for (const platform of ALL_MEDIA_PLATFORMS) {
+      expect(PLATFORM_LABELS_FA[platform], platform).toBeTruthy();
+    }
+  });
+
+  it('names every supported platform in the text a user actually reads', () => {
+    // The regression: the platform list was written out by hand in three
+    // places, so adding YouTube left the "no link found" prompt and the
+    // "unsupported link" error both telling users YouTube was not supported —
+    // on the very screen they reached by pasting a YouTube link.
+    const list = supportedPlatformsFa();
+    for (const platform of ALL_MEDIA_PLATFORMS) {
+      expect(list, platform).toContain(PLATFORM_LABELS_FA[platform]);
+    }
+    expect(fa.noUrlFound).toContain(list);
+    expect(fa.failure(DownloadFailureCode.UnsupportedPlatform)).toContain(list);
+  });
+
+  it('joins the platform list the way Persian does', () => {
+    const list = supportedPlatformsFa();
+    expect(list).toContain('، ');
+    expect(list).toContain(' و ');
+    expect(list.endsWith('،')).toBe(false);
   });
 
   it('never leaks a technical term to the user', () => {

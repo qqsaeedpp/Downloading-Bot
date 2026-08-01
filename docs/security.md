@@ -30,6 +30,26 @@ network:
 | 8   | Host matches an **anchored** platform pattern | `instagram.com.evil.test`, `notinstagram.com`                     |
 | 9   | Path looks like a single post                 | profile and feed URLs                                             |
 
+Only after all nine have passed does the platform's optional `canonicalize` hook
+run. The order is deliberate: the hook _rebuilds_ a URL, and validating one string
+while handing a different one to the extractor is how an allow-list gets bypassed.
+
+The guard returns three URLs, and the distinction is a privacy and correctness
+control rather than bookkeeping:
+
+| Field           | What it is                                                                    | Used for                                       |
+| --------------- | ----------------------------------------------------------------------------- | ---------------------------------------------- |
+| `originalUrl`   | exactly what the user sent, minus the fragment                                | what is stored (query-stripped by default)     |
+| `requestUrl`    | the canonical form, or `originalUrl` if there is no hook                      | what yt-dlp is given                           |
+| `normalizedUrl` | canonical form with tracking params and trailing slash removed, params sorted | hashed into the cache key and the job identity |
+
+YouTube is the only platform that defines a hook today. It rebuilds every shape —
+`youtu.be/<id>`, `/shorts`, `/embed`, `/live`, `/v`, `/e`, `music.`, `m.`,
+`youtube-nocookie.com` — as `https://www.youtube.com/watch?v=<id>`. Because the URL
+is built from the extracted id alone, `list` and `index` cannot survive it, so a
+playlist link yields the one video it names and yt-dlp cannot be steered into
+fetching two hundred others.
+
 Step 8 is the one that is easy to get wrong. Patterns are built by
 [`defineHostPatterns`](../packages/downloader-engine/src/platforms/platform-definition.ts),
 which anchors both ends:
@@ -44,6 +64,25 @@ An unanchored `hostname.includes('instagram.com')` accepts
 `instagram.com.attacker.test` — that single mistake is the most common way a URL
 allow-list becomes an SSRF hole. `packages/downloader-engine/src/security/url-guard.test.ts`
 asserts every look-alike shape is refused.
+
+Subdomains are enumerated for the same reason, never wildcarded. YouTube's list is
+the longest and shows the rule:
+
+```ts
+const HOST_PATTERNS = defineHostPatterns([
+  String.raw`(?:www\.|m\.|music\.)?youtube\.com`,
+  String.raw`(?:www\.)?youtu\.be`,
+  String.raw`(?:www\.)?youtube-nocookie\.com`,
+]);
+```
+
+So `youtube.com`, `www.`, `m.` and `music.youtube.com`, `youtu.be` and
+`www.youtu.be`, `youtube-nocookie.com` and `www.youtube-nocookie.com` — and nothing
+else. A `.*\.youtube\.com` pattern would additionally accept an attacker-controlled
+host the day YouTube wildcarded its own DNS, and `youtube.com.evil.example`,
+`notyoutube.com` and `youtu.be.evil.example` are all refused by the anchors.
+`youtu.be` is deliberately **not** registered as a short link: it carries the video
+id in its path, so it is resolved locally with no network round trip at all.
 
 **Address rules.** [`ip-rules.ts`](../packages/downloader-engine/src/security/ip-rules.ts)
 blocks loopback, all RFC 1918 ranges, carrier-grade NAT, link-local (including
@@ -75,7 +114,14 @@ against the address rules first as a defence against rebinding.
 
 No shell is ever involved.
 
-- yt-dlp is spawned through `ytdlp-nodejs`'s builders, which use `shell: false`.
+- Inspection spawns yt-dlp with `execFile` directly
+  ([`YtDlpNodeRunner.dumpJson`](../packages/downloader-engine/src/ytdlp/ytdlp-node-runner.ts)),
+  never `exec`, which would hand a remote URL to `/bin/sh`. The argument vector
+  ends with `--` so a URL beginning with a dash cannot be read as a flag.
+- Downloads still go through `ytdlp-nodejs`'s builders, which also use
+  `shell: false`. They are kept for that path alone, because their progress
+  parsing and `kill()` on the live child are what the size watchdog and user
+  cancellation depend on.
 - FFmpeg and ffprobe go through
   [`runProcess`](../packages/downloader-engine/src/process/run-process.ts), which
   uses `execFile` — never `exec`, which hands its string to `/bin/sh`.
@@ -160,6 +206,10 @@ Supplying a `cookies.txt` makes the bot act as that account.
 - A leaked cookie file is a full account takeover. Treat it as a password.
 - Rotate it when the log says
   `authenticated attempt failed in a way that suggests an expired session`.
+- That anonymous retry does not apply to YouTube (`retryWithoutCookies: false`).
+  Its "Sign in to confirm you're not a bot" check is answered _by_ cookies, so a
+  stale `YOUTUBE_COOKIES_PATH` fails the request outright rather than degrading —
+  which is one more reason to use a throwaway account there.
 
 The bot works without any cookies. That is the default, and it is the
 configuration to prefer.
@@ -210,6 +260,10 @@ The bot is used in group chats, where a card is visible to everyone.
 - The **bot image has no writable media volume.** It cannot download even if a
   bug tried to — that is a property of the deployment, not a rule someone has to
   remember.
+- The **bot image has no FFmpeg**, and sets neither `FFMPEG_PATH` nor
+  `FFPROBE_PATH`. Metadata extraction decodes nothing, so the dependency would
+  buy nothing and would quietly enable work that belongs in the worker.
+  `docker compose exec bot which ffmpeg` finding nothing is the expected result.
 - Only the health ports are published, and only on `127.0.0.1`. Postgres and
   Redis are reachable on the internal bridge network alone.
 - `.dockerignore` excludes `.env`, `secrets/` and every `*cookies*.txt`.

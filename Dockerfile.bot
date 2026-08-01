@@ -47,10 +47,15 @@ RUN --mount=type=cache,target=/root/.npm \
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 ARG YTDLP_VERSION
 
+# No FFMPEG_PATH or FFPROBE_PATH, and no FFmpeg in the image.
+#
+# This process only ever runs `yt-dlp --dump-single-json`, which decodes
+# nothing. Setting the paths anyway — as this image previously did — pointed the
+# configuration at binaries that were never installed, and the inspection path
+# failed on a dependency it does not have. The config schema defaults both to a
+# bare command name, and nothing in the bot resolves them.
 ENV NODE_ENV=production \
-    YTDLP_PATH=/usr/local/bin/yt-dlp \
-    FFMPEG_PATH=/usr/bin/ffmpeg \
-    FFPROBE_PATH=/usr/bin/ffprobe
+    YTDLP_PATH=/usr/local/bin/yt-dlp
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl python3 tini \

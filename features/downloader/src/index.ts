@@ -34,6 +34,9 @@ export type {
 export type {
   CreateDownloadJobInput,
   DownloadJobRepository,
+  UpdateJobOutputInput,
+  UpdateJobProgressInput,
+  UpdateJobSelectionInput,
   UpdateJobStatusInput,
 } from './domain/ports/download-job.repository.js';
 export type {
@@ -50,6 +53,8 @@ export type {
 } from './domain/ports/supporting-ports.js';
 
 export { ProgressThrottler } from './application/services/progress-throttler.js';
+export { ProgressWriter } from './application/services/progress-writer.js';
+export type { ProgressWriterOptions } from './application/services/progress-writer.js';
 export { InspectMediaUseCase } from './application/use-cases/inspect-media.use-case.js';
 export { RequestDownloadUseCase } from './application/use-cases/request-download.use-case.js';
 export { ProcessDownloadUseCase } from './application/use-cases/process-download.use-case.js';
@@ -95,7 +100,12 @@ export {
   encodeCallback,
 } from './presentation/telegram/callback-data.js';
 export type { DownloadCallback } from './presentation/telegram/callback-data.js';
-export { PLATFORM_LABELS_FA, fa, toPersianDigits } from './presentation/telegram/messages/fa.js';
+export {
+  PLATFORM_LABELS_FA,
+  fa,
+  supportedPlatformsFa,
+  toPersianDigits,
+} from './presentation/telegram/messages/fa.js';
 export {
   buildCancelKeyboard,
   buildQualityKeyboard,

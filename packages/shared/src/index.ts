@@ -35,6 +35,9 @@ export {
 } from './media/vocabulary.js';
 export type { DownloadProgress } from './media/vocabulary.js';
 
+export { normalizeProgress } from './media/progress.js';
+export type { NormalizedProgress } from './media/progress.js';
+
 export { sanitizeFilename, truncateToBytes } from './fs/sanitize-filename.js';
 export type { SanitizeFilenameOptions, SanitizedFilename } from './fs/sanitize-filename.js';
 

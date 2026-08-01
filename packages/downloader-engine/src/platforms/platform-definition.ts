@@ -53,6 +53,22 @@ export interface PlatformDefinition {
   readonly hostPatterns: readonly RegExp[];
   supports(url: URL): boolean;
   createPolicy(): PlatformDownloadPolicy;
+
+  /**
+   * Rewrite a URL into the platform's canonical shape.
+   *
+   * Optional, because most platforms have exactly one URL per post. YouTube has
+   * eight — `youtu.be`, `/shorts`, `/embed`, `/live`, `music.`, `m.`, plus
+   * playlist and timestamp context — and without collapsing them, one video
+   * shared eight ways is eight cache misses and eight extractor calls.
+   *
+   * It is also how playlist context is discarded: the canonical form names only
+   * the video the URL explicitly referenced, so yt-dlp cannot wander into item
+   * one of two hundred.
+   *
+   * Returning the URL unchanged is always valid.
+   */
+  canonicalize?(url: URL): URL;
 }
 
 /** Tracking junk every platform accumulates; never part of media identity. */

@@ -26,6 +26,7 @@ const TARGETS = [
   { platform: MediaPlatform.TikTok, url: process.env.SMOKE_TIKTOK_URL },
   { platform: MediaPlatform.Pinterest, url: process.env.SMOKE_PINTEREST_URL },
   { platform: MediaPlatform.X, url: process.env.SMOKE_X_URL },
+  { platform: MediaPlatform.YouTube, url: process.env.SMOKE_YOUTUBE_URL },
 ] as const;
 
 describe.skipIf(!ENABLED)('extractor smoke tests', () => {

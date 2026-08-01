@@ -17,13 +17,14 @@
  * schema, and adding a platform without updating them would have silently
  * discarded every job for it.
  */
-export const MEDIA_PLATFORM_VALUES = ['instagram', 'tiktok', 'pinterest', 'x'] as const;
+export const MEDIA_PLATFORM_VALUES = ['instagram', 'tiktok', 'pinterest', 'x', 'youtube'] as const;
 
 export const MediaPlatform = {
   Instagram: 'instagram',
   TikTok: 'tiktok',
   Pinterest: 'pinterest',
   X: 'x',
+  YouTube: 'youtube',
 } as const;
 export type MediaPlatform = (typeof MediaPlatform)[keyof typeof MediaPlatform];
 

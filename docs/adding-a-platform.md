@@ -1,14 +1,20 @@
 # Adding a platform to the downloader
 
-Four platforms ship today: Instagram, TikTok, Pinterest and X/Twitter. Adding a
-fifth — Reddit, say — is mostly declarative, but the slug appears in six places
-that are not all guarded by the same test. This is the full list.
+Five platforms ship today: Instagram, TikTok, Pinterest, X/Twitter and YouTube.
+Adding a sixth — Reddit, say — is mostly declarative, but the slug still appears
+in several places that are not all guarded by the same test. This is the full
+list.
+
+YouTube was the last one added, so its files are the most useful worked example
+in the repository — including the migration and the one capability the first four
+did not need, `canonicalize`.
 
 Read first:
 
 - `packages/downloader-engine/src/platforms/platform-definition.ts` — the interfaces.
 - `packages/downloader-engine/src/platforms/instagram.ts` — the simplest definition.
 - `packages/downloader-engine/src/platforms/pinterest.ts` — the one with the awkward host list.
+- `packages/downloader-engine/src/platforms/youtube.ts` — the one that canonicalises.
 - `packages/downloader-engine/src/platforms/registry.ts` — how definitions are found.
 
 ---
@@ -23,6 +29,7 @@ export interface PlatformDefinition {
   readonly hostPatterns: readonly RegExp[];
   supports(url: URL): boolean;
   createPolicy(): PlatformDownloadPolicy;
+  canonicalize?(url: URL): URL;
 }
 ```
 
@@ -30,7 +37,8 @@ export interface PlatformDefinition {
 message and by `registry.isKnownHost`). `supports()` answers the stricter question
 "does this URL point at a single downloadable post" — a bare profile link matches
 the host but must not match `supports`, so the user gets a precise "unsupported
-link" instead of a confusing extractor failure.
+link" instead of a confusing extractor failure. `canonicalize` is optional and
+described at the end of this section.
 
 `PlatformDownloadPolicy` is the data description the rest of the engine branches on
 instead of writing `switch (platform)` in four different files.
@@ -147,9 +155,9 @@ args.push(...input.platformExtraArgs);
 ```
 
 **Consequence:** every yt-dlp invocation for the platform — inspect, video, audio,
-image — carries these. One array element per argv token; the runner spawns with
-`shell: false`, so `'--extractor-args'` and its value are two separate strings. All
-four current platforms use `[]`.
+image — carries these. One array element per argv token; the runner spawns without
+a shell, so `'--extractor-args'` and its value are two separate strings. All five
+current platforms use `[]`.
 
 ### `strippableQueryParams: readonly string[]`
 
@@ -166,6 +174,46 @@ Always spread `COMMON_TRACKING_PARAMS` first, then add the platform's own:
 ```ts
 strippableQueryParams: [...COMMON_TRACKING_PARAMS, 'igshid', 'igsh', 'img_index'],
 ```
+
+### `canonicalize?(url: URL): URL` — optional
+
+Most platforms have exactly one URL shape per post, and for those the hook should
+simply be left off. Implement it when the same post is reachable by several
+genuinely different URLs, because without it each shape is its own cache miss and
+its own extractor call.
+
+YouTube is the case that forced it into the interface. One video arrives as
+`youtu.be/<id>`, `/watch?v=<id>&t=90`, `/shorts/<id>`, `/embed/<id>`, `/live/<id>`,
+`music.youtube.com/watch?v=<id>` and `m.youtube.com/…`. Its `canonicalize` extracts
+the id and rebuilds a single form:
+
+```ts
+  canonicalize(url: URL): URL {
+    const videoId = extractYouTubeVideoId(url);
+    if (videoId === undefined) return url;
+    const canonical = new URL('https://www.youtube.com/watch');
+    canonical.searchParams.set('v', videoId);
+    return canonical;
+  },
+```
+
+Two things follow from rebuilding rather than editing. The first is caching: the
+canonical URL is what `normalizeUrl` hashes into `normalizedUrlHash`. The second
+is the playlist safeguard — a URL built from the id alone cannot carry `list` or
+`index`, so yt-dlp is handed exactly the video the user pointed at and cannot
+wander into item one of two hundred. That is why the app never downloads a
+playlist, and it is a property of this function rather than a flag someone has to
+remember to pass.
+
+`UrlGuard.parse` calls the hook **after** the host and path checks, never before,
+because it rebuilds a URL and validating a different string from the one that
+reaches the extractor is how allow-lists get bypassed. The result becomes both the
+cache key and `SafeMediaUrl.requestUrl` — see §1 of
+[`security.md`](./security.md) for the three URL fields the guard returns.
+
+**Returning the URL unchanged is always valid**, and is the right answer whenever
+the id cannot be extracted: YouTube does exactly that for a URL its own
+`extractYouTubeVideoId` does not recognise, rather than inventing a shape.
 
 ---
 
@@ -256,19 +304,34 @@ blocks to extend.
 
 ## 3. Add the slug to the vocabulary
 
-`packages/shared/src/media/vocabulary.ts`:
+`packages/shared/src/media/vocabulary.ts`, in **two** places — the tuple first,
+then the object:
 
 ```ts
+export const MEDIA_PLATFORM_VALUES = [
+  'instagram',
+  'tiktok',
+  'pinterest',
+  'x',
+  'youtube',
+  'reddit',
+] as const;
+
 export const MediaPlatform = {
   Instagram: 'instagram',
   TikTok: 'tiktok',
   Pinterest: 'pinterest',
   X: 'x',
+  YouTube: 'youtube',
   Reddit: 'reddit',
 } as const;
 ```
 
-`ALL_MEDIA_PLATFORMS` derives from it, so nothing else in that file changes.
+`MEDIA_PLATFORM_VALUES` is the single source of truth, and it is a non-empty tuple
+for one reason: a Zod schema can be built straight from it with
+`z.enum(MEDIA_PLATFORM_VALUES)` instead of repeating the literals. `DOWNLOAD_TYPE_VALUES`
+and `MEDIA_KIND_VALUES` exist for the same reason. `ALL_MEDIA_PLATFORMS` derives
+from the tuple, so nothing else in that file changes.
 
 ## 4. Add it to the Postgres enum
 
@@ -280,6 +343,7 @@ export const platformEnum = pgEnum('media_platform', [
   'tiktok',
   'pinterest',
   'x',
+  'youtube',
   'reddit',
 ]);
 ```
@@ -308,6 +372,20 @@ writes into `infra/migrations/`. Review the emitted SQL — it should be a singl
 `ALTER TYPE "public"."media_platform" ADD VALUE 'reddit';` — and commit both the
 `.sql` file and the updated `infra/migrations/meta/` snapshot and journal.
 
+`infra/migrations/0001_add_youtube_platform.sql` is the worked example, and it
+shows the one edit worth making by hand:
+
+```sql
+ALTER TYPE "public"."media_platform" ADD VALUE IF NOT EXISTS 'youtube';
+```
+
+`IF NOT EXISTS` so that a hand-run against a database that already has the value
+is a no-op rather than an error. Drizzle's journal already prevents a second
+automated run; this covers the manual case. PostgreSQL 12+ permits
+`ALTER TYPE … ADD VALUE` inside a transaction — which is how the migrator runs it —
+provided the new value is not _used_ in the same transaction, and nothing in that
+file does.
+
 CI enforces this. The `migrations` job in `.github/workflows/ci.yml` applies the
 migrations twice (proving idempotency) and then re-runs `db:generate`, failing on a
 dirty tree:
@@ -320,49 +398,65 @@ dirty tree:
       echo "::error::Schema drift: the Drizzle schema does not match infra/migrations."
 ```
 
-## 6. The two hand-written Zod enums
+## 6. The two Zod enums — nothing to do
 
-Neither of these is covered by the vocabulary drift test, and both will silently
-reject every job or cache entry for the new platform:
+There is no step here any more, but it is worth knowing why, because the two
+schemas below used to be the easiest thing in this list to forget.
 
-- `features/downloader/src/infrastructure/queue/bullmq-download-queue.ts`, in
-  `downloadJobPayloadSchema`:
-  ```ts
-    platform: z.enum(['instagram', 'tiktok', 'pinterest', 'x']),
-  ```
-  A payload that fails this is logged and **discarded** by the processor
-  (`'discarding an unparsable job payload'`), so the symptom is a job that
-  disappears with no user-visible error.
-- `features/downloader/src/infrastructure/cache/redis-media-inspection-cache.ts`,
-  in `cachedMediaInfoSchema`. A failure here degrades to a cache miss, so the
-  symptom is milder: every inspection re-runs yt-dlp.
+`downloadJobPayloadSchema` in
+`features/downloader/src/infrastructure/queue/bullmq-download-queue.ts` and
+`cachedMediaInfoSchema` in
+`features/downloader/src/infrastructure/cache/redis-media-inspection-cache.ts`
+both used to repeat `z.enum(['instagram', 'tiktok', 'pinterest', 'x'])` by hand.
+Neither was covered by the vocabulary drift test, so a new slug in §3 with no
+matching edit here produced two silent failures: a queue payload that failed
+validation was logged and **discarded** by the processor
+(`'discarding an unparsable job payload'`) — a job that vanished with no
+user-visible error — and a cache entry that failed validation degraded every
+inspection into a fresh yt-dlp run.
+
+Both now build from the shared vocabulary:
+
+```ts
+    platform: z.enum(MEDIA_PLATFORM_VALUES),
+    type: z.enum(DOWNLOAD_TYPE_VALUES),
+```
+
+and the cache schema additionally uses `z.enum(MEDIA_KIND_VALUES)`, all imported
+from `@tgtools/shared`. Adding a slug in §3 reaches them with no further edit. If
+you write a third schema that needs the platform set, derive it the same way
+rather than typing the literals out.
 
 ## 7. The Persian label
 
 `features/downloader/src/presentation/telegram/messages/fa.ts`:
 
 ```ts
-export const PLATFORM_LABELS_FA = {
+export const PLATFORM_LABELS_FA: Readonly<Record<MediaPlatform, string>> = {
   instagram: 'اینستاگرام',
   tiktok: 'تیک‌تاک',
   pinterest: 'پینترست',
   x: 'ایکس (توییتر)',
+  youtube: 'یوتیوب',
   reddit: 'ردیت',
-} as const;
+};
 ```
 
-`renderMediaCard` indexes it with `PLATFORM_LABELS_FA[info.platform]`, so a missing
-key is a compile error rather than an `undefined` in a user's message. There is
-also a runtime assertion in `fa.test.ts` that lists the keys explicitly:
+The `Record<MediaPlatform, string>` annotation is what makes a missing key a
+compile error rather than an `undefined` in a user's message; `renderMediaCard`
+indexes it with `PLATFORM_LABELS_FA[info.platform]`. The runtime assertion in
+`fa.test.ts` no longer lists the keys by hand, so there is nothing to update
+there:
 
 ```ts
 it('has a label for every supported platform', () => {
-  expect(Object.keys(PLATFORM_LABELS_FA).sort()).toEqual(['instagram', 'pinterest', 'tiktok', 'x']);
-});
+  // Derived from the vocabulary rather than hard-coded, so adding a platform
+  // fails here instead of rendering its raw slug to a Persian-speaking user.
+  expect(Object.keys(PLATFORM_LABELS_FA).sort()).toEqual([...ALL_MEDIA_PLATFORMS].sort());
 ```
 
-Update that array too. While you are in the message tables, three pieces of prose
-enumerate the supported platforms and should be updated to match:
+The prose is the part that is still manual. Three pieces of it enumerate the
+supported platforms and must be updated by hand, because nothing checks them:
 
 - `fa.noUrlFound` and `fa.failure(DownloadFailureCode.UnsupportedPlatform)` in `fa.ts`.
 - `START_MESSAGE` in `features/start/src/index.ts`.
@@ -377,12 +471,15 @@ export const DEFAULT_PLATFORM_DEFINITIONS: readonly PlatformDefinition[] = [
   tiktokPlatform,
   pinterestPlatform,
   xPlatform,
+  youtubePlatform,
   redditPlatform,
 ];
 ```
 
 and export it from `packages/downloader-engine/src/index.ts` alongside the other
-four.
+five. Export any helper the definition needs to share too — YouTube exports
+`extractYouTubeVideoId` next to `youtubePlatform`, because the id extraction is
+the part a test wants to drive directly.
 
 `createPlatformRegistry` calls `assertCompleteCoverage`, which throws
 `EngineError(Internal, 'Platform registry is missing definitions for: …')` if a
@@ -400,7 +497,7 @@ irrelevant.
 Only if the platform needs an authenticated session. Four edits:
 
 1. `packages/config/src/env.schema.ts` — add `REDDIT_COOKIES_PATH: optionalText(),`
-   next to the other four.
+   next to the other five.
 2. `packages/config/src/load-config.ts` — add the entry to `buildCookieConfig`:
    ```ts
    const entries: [MediaPlatform, string | undefined][] = [
@@ -434,16 +531,15 @@ that asserts the exact shape of `config.cookies`; extend it.
 - [ ] Short-link hosts listed as plain lowercase hostnames **and** matched by `hostPatterns`.
 - [ ] `strippableQueryParams` spreads `COMMON_TRACKING_PARAMS` and adds the platform's per-share identifiers.
 - [ ] `preferProgressive` set only after measuring the platform's pre-muxed stream.
-- [ ] Slug added to `MediaPlatform` in `packages/shared/src/media/vocabulary.ts`.
+- [ ] `canonicalize` implemented if one post has several URL shapes — or omitted, which is the common case.
+- [ ] Slug added to `MEDIA_PLATFORM_VALUES` **and** `MediaPlatform` in `packages/shared/src/media/vocabulary.ts`.
 - [ ] Slug added to `platformEnum` in `packages/database/src/schema/enums.ts`.
-- [ ] `npm run db:generate`; the new `infra/migrations/*.sql` and `meta/` files committed.
-- [ ] Slug added to the Zod enum in `bullmq-download-queue.ts`.
-- [ ] Slug added to the Zod enum in `redis-media-inspection-cache.ts`.
-- [ ] Persian label added to `PLATFORM_LABELS_FA`, and the key list in `fa.test.ts` updated.
+- [ ] `npm run db:generate`; the new `infra/migrations/*.sql` and `meta/` files committed, with `IF NOT EXISTS` added to the `ADD VALUE`.
+- [ ] Persian label added to `PLATFORM_LABELS_FA` (the `fa.test.ts` assertion derives itself from the vocabulary).
 - [ ] Prose in `fa.noUrlFound`, `fa.failure(UnsupportedPlatform)` and `features/start/src/index.ts` updated.
 - [ ] Definition added to `DEFAULT_PLATFORM_DEFINITIONS` and exported from the engine's `index.ts`.
 - [ ] Cookie env var wired through `env.schema.ts`, `load-config.ts`, `.env.example` and `docker-compose.yml`, if needed.
-- [ ] Accepted and hostile URLs added to `packages/downloader-engine/src/security/url-guard.test.ts`.
+- [ ] Accepted and hostile URLs covered — in `packages/downloader-engine/src/security/url-guard.test.ts`, or a dedicated file next to the definition as `platforms/youtube.test.ts` does.
 - [ ] `npm run lint && npm run check-types && npm test && npm run test:integration && npm run build`.
 
 ## The smoke test

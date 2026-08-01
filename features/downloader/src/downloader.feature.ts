@@ -26,7 +26,10 @@ import { RedisMediaInspectionCache } from './infrastructure/cache/redis-media-in
 import { DrizzleDownloadEventRepository } from './infrastructure/persistence/drizzle-download-event.repository.js';
 import { DrizzleDownloadJobRepository } from './infrastructure/persistence/drizzle-download-job.repository.js';
 import { DefaultDownloadAccessPolicy } from './infrastructure/policy/default-access-policy.js';
-import { EngineMediaDownloader } from './infrastructure/providers/engine-media-downloader.adapter.js';
+import {
+  EngineMediaDownloader,
+  toDomainError,
+} from './infrastructure/providers/engine-media-downloader.adapter.js';
 import { BullMqDownloadQueue } from './infrastructure/queue/bullmq-download-queue.js';
 import { DOWNLOAD_CALLBACK_PATTERN } from './presentation/telegram/callback-data.js';
 import { createDownloadCallbackHandler } from './presentation/telegram/handlers/download-callback.handler.js';
@@ -185,12 +188,32 @@ async function resolveUrl(
   rawUrl: string,
   signal: AbortSignal | undefined,
 ): Promise<{ platform: MediaPlatform; storable: StorableUrl; requestUrl: string }> {
-  const safe = options.engine.urlGuard.parse(rawUrl);
-  const resolved = await options.engine.redirectResolver.resolve(safe, signal);
+  // The URL guard is the one place the engine is called WITHOUT going through
+  // `EngineMediaDownloader`, so its errors used to miss that adapter's code
+  // map entirely: an `EngineError` fell through `toDownloadError` as
+  // INTERNAL_ERROR, and every rejected link — an unsupported platform, a
+  // blocked address, a malformed URL — reached the user as "something went
+  // wrong, try again later". Mapping it here is what makes the specific
+  // Persian messages reachable at all.
+  let safe;
+  try {
+    safe = options.engine.urlGuard.parse(rawUrl);
+  } catch (error: unknown) {
+    throw toDomainError(error);
+  }
+
+  const resolved = await options.engine.redirectResolver
+    .resolve(safe, signal)
+    .catch((error: unknown) => {
+      throw toDomainError(error);
+    });
 
   return {
     platform: resolved.platform,
-    requestUrl: resolved.originalUrl,
+    // The canonical form, not what the user pasted: for YouTube that is the
+    // bare `watch?v=<id>`, which is how playlist and timestamp context is kept
+    // away from the extractor.
+    requestUrl: resolved.requestUrl,
     storable: {
       sourceUrl: options.config.privacy.storeFullSourceUrl
         ? resolved.originalUrl

@@ -1,5 +1,32 @@
-import { DownloadType, bytesToMegabytes } from '@tgtools/shared';
+import { DownloadType, MediaKind, bytesToMegabytes } from '@tgtools/shared';
 import type { EngineMediaFormat, EngineQualityOption } from '../engine-types.js';
+
+/**
+ * Whether an audio track can actually be produced from this post.
+ *
+ * Written as an explicit evidence ladder rather than a guess, because the old
+ * code guessed: `listAudioOptions` had a floor that returned a 128 kbps option
+ * whenever it had nothing better to say, so an image-only tweet — which has no
+ * formats at all — advertised two audio bitrates that could never be delivered.
+ */
+export function hasExtractableAudio(
+  formats: readonly EngineMediaFormat[],
+  mediaKind: MediaKind,
+): boolean {
+  // 1. Positive evidence: something declares a real audio codec.
+  if (formats.some((format) => format.audioCodec !== undefined && format.audioCodec !== 'none'))
+    return true;
+
+  // 2. Negative evidence: a format says, in so many words, that it has none.
+  //    A tweeted GIF is a silent MP4 and yt-dlp reports `acodec: "none"`.
+  if (formats.some((format) => format.audioCodec === 'none')) return false;
+
+  // 3. No format describes its audio at all. Instagram's pre-muxed file is like
+  //    this — it really is a video with sound, yt-dlp simply cannot read it —
+  //    so infer from the kind rather than refusing. An image or an unclassified
+  //    post gets nothing.
+  return mediaKind === MediaKind.Video || mediaKind === MediaKind.Audio;
+}
 
 export interface VideoSelectorInput {
   /** Height the user picked, e.g. 1080. Absent means "best available". */
@@ -163,14 +190,19 @@ export class YtDlpFormatSelector {
   /**
    * Audio options capped by what the source can actually deliver.
    *
-   * Offering "320 kbps" for a reel whose audio track is 64 kbps would be a lie:
-   * the re-encode produces a 320 kbps file that sounds exactly like the 64 kbps
-   * original, only five times larger.
+   * Two separate lies are avoided here. Offering "320 kbps" for a reel whose
+   * audio track is 64 kbps produces a file five times larger that sounds
+   * identical. And offering ANY bitrate for a post with no audio at all — a
+   * photo tweet, a silent GIF — queues a job the extractor can only answer with
+   * "No video could be found in this tweet", after the user has already waited.
    */
   listAudioOptions(
     formats: readonly EngineMediaFormat[],
     durationSeconds: number | undefined,
+    mediaKind: MediaKind,
   ): readonly EngineQualityOption[] {
+    if (!hasExtractableAudio(formats, mediaKind)) return [];
+
     const sourceBitrate = formats.reduce<number | undefined>((best, format) => {
       const bitrate = format.audioBitrateKbps;
       if (bitrate === undefined || bitrate <= 0) return best;
@@ -183,6 +215,9 @@ export class YtDlpFormatSelector {
           AUDIO_BITRATE_LADDER.filter((bitrate) => bitrate <= 192)
         : AUDIO_BITRATE_LADDER.filter((bitrate) => bitrate <= Math.ceil(sourceBitrate));
 
+    // A source quieter than the lowest rung still gets that rung: we have
+    // already established there IS audio, so refusing to offer any would be as
+    // wrong as inventing one. This floor is only reachable with real audio.
     const ladder = offered.length > 0 ? offered : [AUDIO_BITRATE_LADDER[0] ?? 128];
 
     return ladder

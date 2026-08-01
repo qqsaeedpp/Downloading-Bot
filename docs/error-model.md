@@ -211,6 +211,37 @@ the domain default derived from `PERMANENT_FAILURE_CODES`. That is what keeps
 they land on `INTERNAL_ERROR`, which is not in the permanent set. It also makes
 `GEO_RESTRICTED → UNSUPPORTED_MEDIA` consistent (neither is retryable).
 
+### The path that used to miss the table
+
+`toDomainError` is the only entry point, and everything must actually go through
+it. The URL guard is the one place the engine is called _without_ passing through
+`EngineMediaDownloader`, and for a while it did not: `resolveUrl` in
+`features/downloader/src/downloader.feature.ts` let the guard's `EngineError`
+propagate, `toDownloadError` did not recognise it, and it was narrowed to
+`INTERNAL_ERROR` as a last resort.
+
+The effect was invisible in the logs and very visible to users. Every rejected
+link — an unsupported platform, a malformed URL, a blocked address — arrived as
+"⚠️ مشکلی پیش آمد" ("something went wrong, try again shortly") instead of the
+specific sentence written for it. Worse, `INTERNAL_ERROR` is retryable, so a
+permanently invalid URL looked like a transient fault.
+
+Both the guard and the redirect resolver are now wrapped:
+
+```ts
+let safe;
+try {
+  safe = options.engine.urlGuard.parse(rawUrl);
+} catch (error: unknown) {
+  throw toDomainError(error);
+}
+```
+
+which is what makes `INVALID_URL` and `UNSUPPORTED_PLATFORM` reachable at all. The
+general rule: an `EngineError` crossing into the feature must pass through
+`toDomainError`, and a `catch` that does not call it is a bug even when the code
+compiles.
+
 ---
 
 ## Classifying yt-dlp stderr
@@ -383,6 +414,33 @@ retry.
 
 In both cases a `failed` event is recorded first, so the audit trail survives even
 when the row does not move.
+
+### A failed progress write is deliberately not a failure
+
+`ProgressWriter`
+(`features/downloader/src/application/services/progress-writer.ts`) catches every
+error its `update` call produces, logs it at `warn` with the job id, the request id
+and the normalised values, and **never rethrows**:
+
+```ts
+      .catch((error: unknown) => {
+        this.options.logger.warn('failed to persist download progress', { … });
+      })
+```
+
+This is not defensiveness for its own sake. The write used to be passed to `void`,
+so a rejected UPDATE reached `process.on('unhandledRejection')` — which the
+shutdown handler correctly treats as fatal. One cosmetic progress row therefore
+killed a worker mid-job, on a download that had otherwise succeeded. (The rejection
+itself came from yt-dlp reporting `total_bytes = 1492973.3333333335` into a
+`bigint` column; `normalizeProgress` now floors it, but the rule stands
+independently of that particular sample.)
+
+The trade is stated in the class docstring: _"Progress is advisory. Losing a sample
+costs a stale percentage for a few seconds; losing the job costs the user their
+file."_ Nothing in the download path branches on whether the write succeeded, and
+`submit()` returns immediately rather than being awaited, so a slow database
+cannot pace the download either.
 
 ---
 

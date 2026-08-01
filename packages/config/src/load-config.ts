@@ -126,6 +126,7 @@ function buildCookieConfig(env: RawEnv): CookieConfig {
     [MediaPlatform.TikTok, env.TIKTOK_COOKIES_PATH],
     [MediaPlatform.X, env.X_COOKIES_PATH],
     [MediaPlatform.Pinterest, env.PINTEREST_COOKIES_PATH],
+    [MediaPlatform.YouTube, env.YOUTUBE_COOKIES_PATH],
   ];
   const cookies: Partial<Record<MediaPlatform, string>> = {};
   for (const [platform, path] of entries) {

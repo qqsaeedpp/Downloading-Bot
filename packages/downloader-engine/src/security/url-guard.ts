@@ -13,6 +13,14 @@ const MAX_URL_LENGTH = 2_048;
 export interface SafeMediaUrl {
   /** Exactly as the user sent it, minus the fragment. */
   readonly originalUrl: string;
+  /**
+   * What to hand the extractor.
+   *
+   * Identical to `originalUrl` unless the platform defines a canonical shape.
+   * For YouTube it is the bare `watch?v=<id>` form, which is how playlist and
+   * timestamp context is prevented from reaching yt-dlp.
+   */
+  readonly requestUrl: string;
   /** Canonical form: lowercase host, no tracking params, no fragment. Cache key. */
   readonly normalizedUrl: string;
   readonly platform: MediaPlatform;
@@ -115,10 +123,15 @@ export class UrlGuard {
     }
 
     const policy = definition.createPolicy();
-    const normalized = normalizeUrl(url, policy.strippableQueryParams);
+    // Canonicalisation runs AFTER the host and path checks, never before: it
+    // rebuilds a URL, and rebuilding an unvalidated one would hand the checks a
+    // different string from the one that reaches the extractor.
+    const canonical = definition.canonicalize?.(url) ?? url;
+    const normalized = normalizeUrl(canonical, policy.strippableQueryParams);
 
     return {
       originalUrl: url.toString(),
+      requestUrl: canonical.toString(),
       normalizedUrl: normalized,
       platform: definition.platform,
       url,

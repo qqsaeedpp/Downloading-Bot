@@ -119,6 +119,7 @@ export const envSchema = z.object({
   TIKTOK_COOKIES_PATH: optionalText(),
   X_COOKIES_PATH: optionalText(),
   PINTEREST_COOKIES_PATH: optionalText(),
+  YOUTUBE_COOKIES_PATH: optionalText(),
 
   BOT_HEALTH_PORT: positiveInt(3_001, { min: 1, max: 65_535 }),
   WORKER_HEALTH_PORT: positiveInt(3_002, { min: 1, max: 65_535 }),

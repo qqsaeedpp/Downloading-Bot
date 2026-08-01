@@ -33,14 +33,27 @@ why each step is where it is.
    what a crash mid-inspection leaves behind for the sweeper to expire. Status:
    `pending` → `inspecting`.
 3. **Resolve the URL.** `UrlGuard.parse` (see [security.md](./security.md)),
-   then `RedirectResolver` for short links only.
+   then `RedirectResolver` for short links only. The guard hands back three
+   URLs, and which one is used where matters: `originalUrl` is what the user
+   sent (minus the fragment), `requestUrl` is what yt-dlp is given, and
+   `normalizedUrl` is what gets hashed into the cache key. They differ only for
+   a platform that defines a canonical shape — YouTube collapses `youtu.be`,
+   `/shorts`, `/embed`, `/live`, `music.` and timestamp links onto
+   `watch?v=<id>`, which is also how `list=` is dropped before the extractor
+   ever sees it. A guard rejection here — unsupported platform, malformed URL,
+   blocked address — is mapped through `toDomainError`, so the user gets the
+   specific sentence rather than the generic one.
 4. **Cache lookup**, keyed by SHA-256 of the normalised URL **and** whether the
    result needed authentication. Those are separate namespaces on purpose: an
    authenticated result may describe a post an anonymous visitor is not entitled
    to see.
 5. **Ask the engine.** `--dump-single-json --skip-download
 --ignore-no-formats-error`; the last flag lets an image-only pin return JSON
-   instead of aborting with "No video formats found".
+   instead of aborting with "No video formats found". This step runs `yt-dlp`
+   through `execFile` directly rather than through `ytdlp-nodejs`, whose builders
+   stat FFmpeg on construction and append `--ffmpeg-location` to every call.
+   Inspection decodes nothing, so it must not depend on a binary the bot
+   container has no reason to ship — which is why that container has none.
 6. **Map and validate.** Raw JSON → Zod → `YtDlpInfoMapper` → domain `MediaInfo`.
    The schema is tolerant by design: every extractor returns a different subset
    and the set changes between releases, so unparsable _fields_ are dropped
@@ -101,7 +114,7 @@ claim it: version-checked write → downloading
 download
   ├─ per-job workspace (mkdtemp)
   ├─ size watchdog every 3 s
-  ├─ progress → DB every sample, → Telegram only when the throttler agrees
+  ├─ progress → DB via ProgressWriter, → Telegram only when the throttler agrees
   ├─ ffprobe → planNormalization → remux or re-encode
   └─ thumbnail from ~10% in
 
@@ -113,7 +126,40 @@ finally: delete the workspace, always
 _both_ a minimum age (`PROGRESS_UPDATE_INTERVAL_MS`) and meaningful movement
 (`PROGRESS_UPDATE_MIN_PERCENT`) — with two exceptions: the first sample always
 renders, so the user sees something immediately, and the jump to 100% always
-renders, so the bar never stops at 97%.
+renders, so the bar never stops at 97%. Only the Telegram edit goes through the
+throttler; the database write has its own machinery.
+
+**Progress persistence.** The two halves are separate because they fail
+differently: an expensive Telegram edit is worth rationing, and a cheap database
+write must be incapable of harming the download. Every sample goes to
+`ProgressWriter`, which:
+
+- **Normalises it first.** `normalizeProgress` (`@tgtools/shared`) floors byte
+  counts to integers, because yt-dlp divides a fragment count into an estimate
+  and does not round — a Pinterest download reported
+  `total_bytes = 1492973.3333333335`, and Postgres refused it for a `bigint`
+  column. Anything unusable (`NaN`, infinite, negative, or a zero _total_, which
+  means "unknown" rather than "empty") becomes `undefined`, or `0` for the
+  downloaded count. Percent is clamped to 0..100 and derived from the byte counts
+  whenever a total is known, because yt-dlp's own percentage comes from a
+  different estimate than its byte counts and the two disagree often enough to
+  make a bar jump backwards.
+- **Coalesces the writes.** One UPDATE per sample meant dozens of overlapping
+  writes against one row. At most one is in flight at a time now, and the newest
+  pending sample wins — a sample that arrives mid-write replaces any earlier one
+  still waiting. A sample that would move the bar backwards is dropped, unless
+  `beginPhase()` has declared a legitimate restart (which is what the transition
+  into `normalizing` does, since the byte counter restarts against a different
+  total).
+- **Swallows its own failures.** `submit()` returns immediately and never throws;
+  a rejected write is logged and dropped. It is called from inside yt-dlp's
+  progress callback, where an exception would propagate into the extractor, and
+  the rejection used to reach `unhandledRejection` and take the worker down. See
+  [error-model.md](./error-model.md).
+- **Is closed on every exit path.** `close()` sits in the `finally` alongside the
+  workspace cleanup, so the last useful state reaches the database before the job
+  is marked completed and a finished, failed or cancelled job leaves nothing
+  scheduled behind it.
 
 **Version tracking.** The use case carries the version it holds in one variable
 advanced by `#advance`, rather than writing `job.version + 1`, `+ 2` at each

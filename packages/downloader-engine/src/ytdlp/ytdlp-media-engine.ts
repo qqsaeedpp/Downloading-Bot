@@ -5,6 +5,7 @@ import type { DownloadProgress, IdGenerator, Logger } from '@tgtools/shared';
 import {
   assertContainedPath,
   createAbortScope,
+  describeError,
   redactUrl,
   sanitizeFilename,
   throwIfAborted,
@@ -153,7 +154,7 @@ export class YtDlpMediaEngine implements MediaEngine {
       info.durationSeconds,
     );
     const audio = policy.supportsAudioExtraction
-      ? this.#selector.listAudioOptions(info.formats, info.durationSeconds)
+      ? this.#selector.listAudioOptions(info.formats, info.durationSeconds, info.mediaKind)
       : [];
 
     // A video post with no usable rendition is not a failure yet — the download
@@ -267,7 +268,13 @@ export class YtDlpMediaEngine implements MediaEngine {
     const outputTemplate = workspace.createOutputTemplate();
     const maxBytes = this.options.limits.maxDownloadBytes;
     const onProgress = (progress: DownloadProgress): void => {
-      void context.onProgress?.(progress);
+      // Defence in depth. The caller is expected to absorb its own failures —
+      // `ProgressWriter` does — but a progress callback rejecting here would
+      // become an unhandled rejection, and the worker treats those as fatal.
+      // Progress is never worth a job.
+      void Promise.resolve(context.onProgress?.(progress)).catch((error: unknown) => {
+        this.options.logger.debug('progress callback failed', { error: describeError(error) });
+      });
     };
 
     await context.onStageChange?.(DownloadStage.Downloading);

@@ -4,11 +4,15 @@ import { Composer } from 'grammy';
 export interface HelpFeatureOptions {
   /** Shown so the user knows the ceiling before waiting for a large file. */
   readonly maxUploadMegabytes: number;
+  /** Supplied by the composition root; see `StartFeatureOptions`. */
+  readonly supportedPlatforms: string;
 }
 
 function buildHelpMessage(options: HelpFeatureOptions): string {
   return [
     '<b>راهنمای استفاده</b>',
+    '',
+    `پلتفرم‌های پشتیبانی‌شده: ${options.supportedPlatforms}`,
     '',
     '۱. لینک پست، ریل، ویدیو یا پین را بفرستید.',
     '۲. چند لحظه صبر کنید تا اطلاعات رسانه را نشان دهم.',

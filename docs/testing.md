@@ -89,9 +89,10 @@ though `vitest.config.ts` picks it up automatically.
 
 ---
 
-## The fakes in `tests/support/`
+## The fakes in `tests/support/` and the fixtures in `tests/fixtures/`
 
-Three files, shared by the integration and e2e suites.
+Three files of fakes, shared by the integration and e2e suites, plus one file of
+captured extractor output.
 
 ### `in-memory-repositories.ts`
 
@@ -149,32 +150,51 @@ failed."_
 and `pinterestPinInfo()` — fully-populated `MediaInfo` values so a test does not
 have to hand-build twenty fields.
 
+### `tests/fixtures/x-posts.ts`
+
+A different kind of fixture: **sanitised `yt-dlp --dump-single-json` output**,
+captured from the real extractors and stripped of identifying detail.
+`X_VIDEO_POST`, `X_GIF_POST` (video track, no audio), `X_SINGLE_PHOTO_POST`,
+`X_MULTI_PHOTO_POST`, `X_TEXT_ONLY_POST`, `X_MIXED_MEDIA_POST` and
+`YOUTUBE_VIDEO`.
+
+The point is stated in the file header: the deterministic suite must not depend on
+live URLs, because a tweet can be deleted, protected or rate-limited, and a test
+that goes red for those reasons stops meaning anything. Where `media-fixtures.ts`
+gives you a domain object, these give you the raw document the mapper has to cope
+with — which is the only way to test classification decisions against shapes the
+extractor really produces.
+
 ---
 
 ## What each major test file covers
 
 ### Unit — `packages/`
 
-| File                                                      | Covers                                                                                                                                                                                                                                                      |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `shared/src/async/cancellation.test.ts`                   | `createAbortScope` (parent + timeout composition, cleanup), `delay`, `isTimeoutAbort`, `isCancellation`, `throwIfAborted`.                                                                                                                                  |
-| `shared/src/format/units.test.ts`                         | `formatBytes`, `formatDuration`, `renderProgressBar`, the MB↔bytes conversions.                                                                                                                                                                             |
-| `shared/src/fs/path-safety.test.ts`                       | `isPathInside` — the containment check behind `assertContainedPath`.                                                                                                                                                                                        |
-| `shared/src/fs/sanitize-filename.test.ts`                 | `sanitizeFilename` and `truncateToBytes` against hostile remote titles.                                                                                                                                                                                     |
-| `shared/src/privacy/redact.test.ts`                       | `redactUrl`, `stripUrlQuery`, `hashUrl`, `truncateForStorage`.                                                                                                                                                                                              |
-| `config/src/load-config.test.ts`                          | The whole config surface: the fully-defaulted object, MB→byte conversion, every `assertCoherent` rule, boolean parsing, cookie-path mapping, enum rejection. Includes a regression guard that the shipped defaults actually boot.                           |
-| `database/src/schema/vocabulary.test.ts`                  | Drift guard: the three `pgEnum`s must match the shared vocabulary exactly, have no duplicates, and be named after the type they create.                                                                                                                     |
-| `telegram/src/html.test.ts`                               | `escapeHtml`, `clampText`, `clampCaption`/`clampMessage`.                                                                                                                                                                                                   |
-| `telegram/src/telegram-errors.test.ts`                    | Every `TelegramErrorKind` branch and `isRetryableTelegramError`.                                                                                                                                                                                            |
-| `downloader-engine/src/security/url-guard.test.ts`        | Accepted links, **host confusion**, **SSRF surface**, supported-host-but-unsupported-path, and `normalizeUrl`.                                                                                                                                              |
-| `downloader-engine/src/security/ip-rules.test.ts`         | `inspectIpAddress` across the private/link-local/reserved ranges.                                                                                                                                                                                           |
-| `downloader-engine/src/security/url-extractor.test.ts`    | Pulling URLs out of message text: trailing-punctuation trimming (a full stop vs a closing paren that belongs to the path), first-seen order and de-duplication, and the `isCommand` flag that stops `/start https://…` being treated as a download request. |
-| `downloader-engine/src/ytdlp/format-selector.test.ts`     | The `-f` fallback chain (resolution before codec), the video and audio menus, quality-string parsing. The most consequential logic in the engine.                                                                                                           |
-| `downloader-engine/src/ytdlp/args-builder.test.ts`        | Every argv list, one describe per builder.                                                                                                                                                                                                                  |
-| `downloader-engine/src/ytdlp/info-mapper.test.ts`         | Extractor document → `EngineMediaInfo`, plus `toIsoDate`.                                                                                                                                                                                                   |
-| `downloader-engine/src/ytdlp/stale-cookie-retry.test.ts`  | `withStaleCookieRetry`: retries once on a stale-session phrase, never otherwise.                                                                                                                                                                            |
-| `downloader-engine/src/errors/ytdlp-error-mapper.test.ts` | Message classification, retry disposition, "how the process ended outranks what it printed", output sanitisation, `matchesStaleSession`.                                                                                                                    |
-| `downloader-engine/src/media/playback-normalizer.test.ts` | `planNormalization` (copy vs remux vs re-encode) and `parseFfprobeOutput`.                                                                                                                                                                                  |
+| File                                                      | Covers                                                                                                                                                                                                                                                                     |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shared/src/async/cancellation.test.ts`                   | `createAbortScope` (parent + timeout composition, cleanup), `delay`, `isTimeoutAbort`, `isCancellation`, `throwIfAborted`.                                                                                                                                                 |
+| `shared/src/format/units.test.ts`                         | `formatBytes`, `formatDuration`, `renderProgressBar`, the MB↔bytes conversions.                                                                                                                                                                                            |
+| `shared/src/fs/path-safety.test.ts`                       | `isPathInside` — the containment check behind `assertContainedPath`.                                                                                                                                                                                                       |
+| `shared/src/fs/sanitize-filename.test.ts`                 | `sanitizeFilename` and `truncateToBytes` against hostile remote titles.                                                                                                                                                                                                    |
+| `shared/src/privacy/redact.test.ts`                       | `redactUrl`, `stripUrlQuery`, `hashUrl`, `truncateForStorage`.                                                                                                                                                                                                             |
+| `shared/src/media/progress.test.ts`                       | `normalizeProgress`: flooring the fractional total that crashed a worker, `NaN`/infinite/negative counts, a zero total meaning "unknown", and percent clamped to 0..100 and derived from the byte counts.                                                                  |
+| `config/src/load-config.test.ts`                          | The whole config surface: the fully-defaulted object, MB→byte conversion, every `assertCoherent` rule, boolean parsing, cookie-path mapping, enum rejection. Includes a regression guard that the shipped defaults actually boot.                                          |
+| `database/src/schema/vocabulary.test.ts`                  | Drift guard: the three `pgEnum`s must match the shared vocabulary exactly, have no duplicates, and be named after the type they create.                                                                                                                                    |
+| `telegram/src/html.test.ts`                               | `escapeHtml`, `clampText`, `clampCaption`/`clampMessage`.                                                                                                                                                                                                                  |
+| `telegram/src/telegram-errors.test.ts`                    | Every `TelegramErrorKind` branch and `isRetryableTelegramError`.                                                                                                                                                                                                           |
+| `downloader-engine/src/security/url-guard.test.ts`        | Accepted links, **host confusion**, **SSRF surface**, supported-host-but-unsupported-path, and `normalizeUrl`.                                                                                                                                                             |
+| `downloader-engine/src/security/ip-rules.test.ts`         | `inspectIpAddress` across the private/link-local/reserved ranges.                                                                                                                                                                                                          |
+| `downloader-engine/src/platforms/youtube.test.ts`         | Every accepted YouTube shape, host confusion (`youtube.com.evil.example`, `notyoutube.com`), and canonicalisation: eight URLs for one video collapsing to one cache key, a timestamp kept out of the identity, and a playlist link resolving to the single video it names. |
+| `downloader-engine/src/security/url-extractor.test.ts`    | Pulling URLs out of message text: trailing-punctuation trimming (a full stop vs a closing paren that belongs to the path), first-seen order and de-duplication, and the `isCommand` flag that stops `/start https://…` being treated as a download request.                |
+| `downloader-engine/src/ytdlp/format-selector.test.ts`     | The `-f` fallback chain (resolution before codec), the video and audio menus, quality-string parsing. The most consequential logic in the engine.                                                                                                                          |
+| `downloader-engine/src/ytdlp/args-builder.test.ts`        | Every argv list, one describe per builder.                                                                                                                                                                                                                                 |
+| `downloader-engine/src/ytdlp/audio-availability.test.ts`  | `hasExtractableAudio` and the audio menu: no "🎵 only audio" button for a source that has no audio track.                                                                                                                                                                  |
+| `downloader-engine/src/ytdlp/ytdlp-node-runner.test.ts`   | `dumpJson`: that inspection never touches FFmpeg (the runner is built with an FFmpeg path that does not exist), the `--` terminator before the URL, an argument array and never a shell, signal forwarding, and stderr reaching the mapper.                                |
+| `downloader-engine/src/ytdlp/info-mapper.test.ts`         | Extractor document → `EngineMediaInfo`, plus `toIsoDate`.                                                                                                                                                                                                                  |
+| `downloader-engine/src/ytdlp/stale-cookie-retry.test.ts`  | `withStaleCookieRetry`: retries once on a stale-session phrase, never otherwise.                                                                                                                                                                                           |
+| `downloader-engine/src/errors/ytdlp-error-mapper.test.ts` | Message classification, retry disposition, "how the process ended outranks what it printed", output sanitisation, `matchesStaleSession`.                                                                                                                                   |
+| `downloader-engine/src/media/playback-normalizer.test.ts` | `planNormalization` (copy vs remux vs re-encode) and `parseFfprobeOutput`.                                                                                                                                                                                                 |
 
 ### Unit — `features/`
 
@@ -184,6 +204,7 @@ have to hand-build twenty fields.
 | `downloader/src/presentation/telegram/callback-data.test.ts`     | Round-tripping, Telegram's 64-byte budget, and a table of eleven hostile/stale inputs that must decode to `undefined` rather than throw — another feature's prefix, `dl:../../etc`, an over-long token, the ambiguous characters `I`/`L`/`O`/`U` the short-id alphabet excludes. |
 | `downloader/src/presentation/telegram/messages/fa.test.ts`       | A sentence for every failure code, a label for every stage and platform, no technical term ever leaking, the media card omitting absent fields and escaping HTML, the progress message coping with an unknown total.                                                             |
 | `downloader/src/application/services/progress-throttler.test.ts` | When an update is worth spending a Telegram edit on.                                                                                                                                                                                                                             |
+| `downloader/src/application/services/progress-writer.test.ts`    | `ProgressWriter`: normalising before the repository sees a value, one write in flight at a time with latest-wins, a failing write logged and never rethrown, backward movement dropped unless `beginPhase()` declared it, and nothing scheduled after `close()`.                 |
 
 ### Integration — `tests/integration/`
 
@@ -197,6 +218,22 @@ failure, error mapping (`Video unavailable` → `MEDIA_NOT_FOUND`, the Instagram
 wall → `LOGIN_REQUIRED`), and that the URL guard rejects `http://169.254.169.254/…`
 before the runner is ever called.
 
+`media-classification.test.ts` answers a narrower question with the same
+machinery: given a document a real extractor produced, does the bot offer the
+right buttons? Its `FixtureRunner` replays one of the `tests/fixtures/x-posts.ts`
+documents instead of spawning anything, so the cases are the ones that are
+awkward in practice — video and audio for an ordinary video tweet, **no** audio
+for a tweeted GIF (which has no audio track), an image and never audio for a
+single-photo tweet, the first item of a multi-photo tweet, the video from a tweet
+that mixes a photo and a video, a typed unsupported-media error for a text-only
+tweet, an empty menu for a text-only tweet (which is what the use case turns into
+`UNSUPPORTED_MEDIA`), an image selection carried through to a real file via
+`--write-thumbnail` rather than a video format selector, and the video and audio
+ladders a YouTube document produces. The load-bearing one asserts that a
+photo-only or text-only document yields **no** video and **no** audio option at
+all: an option in the menu is a promise, and a button that could only fail when
+tapped is worse than no button.
+
 `workspace.test.ts` uses the real filesystem, because _"the workspace exists to
 survive concurrent jobs, crashed workers and hostile filenames, and none of those
 can be exercised against a mock"_: unique directories per job, an output template
@@ -205,7 +242,9 @@ has been deleted underneath it, idempotent cleanup, the orphan sweep (and that i
 leaves unrelated directories alone), `ensureWritable`, the `INSUFFICIENT_STORAGE`
 refusal, and the size watchdog aborting a download that outgrows its ceiling.
 
-### E2E — `tests/e2e/download-flow.test.ts`
+### E2E — `tests/e2e/`
+
+#### `download-flow.test.ts`
 
 The whole feature wired with in-memory adapters — _"Real use cases, real state
 machine, real optimistic locking — only the process boundaries are faked."_ Five
@@ -226,6 +265,22 @@ groups:
 - **cancellation** — cancelling a queued job removes it from the queue _and_
   broadcasts the intent; aborting the signal stops a running download; cancelling
   something already finished reports `'already-finished'` rather than an error.
+
+#### `progress-resilience.test.ts`
+
+One group, `progress persistence never endangers the download`, built around the
+exact sample that took a worker down — `totalBytes: 1492973.3333333335`, which
+yt-dlp produced by dividing a fragment count into an estimate without rounding.
+It asserts that no fractional byte count ever reaches the repository, that the job
+completes even when **every** progress write fails, that failing writes produce no
+unhandled rejection (the thing the worker's shutdown handler treats as fatal),
+that a burst of samples is coalesced into far fewer writes, that the final state
+is persisted before the job is marked completed, and that the workspace is still
+cleaned up on a failure path with progress writes also failing.
+
+It belongs in e2e rather than next to `ProgressWriter` because the guarantee is
+about the whole job surviving, not about the writer's own behaviour — which is
+what `progress-writer.test.ts` covers.
 
 ### Smoke — `tests/smoke/extractors.test.ts`
 
@@ -276,6 +331,13 @@ and each platform gates itself again on its URL:
 
 so an operator validating a yt-dlp bump can run it with a link for one platform
 only.
+
+`TARGETS` currently holds Instagram, TikTok, Pinterest and X. YouTube is not in
+it: its extractor behaviour is covered deterministically by the `YOUTUBE_VIDEO`
+fixture in `tests/integration/media-classification.test.ts`, and its URL handling
+by `youtube.test.ts`. Add a `SMOKE_YOUTUBE_URL` target if you want live coverage
+of the extractor itself — the gap is that no fixture can tell you the day YouTube
+changes what it serves.
 
 The reasoning, from the file header: extractors break when a site changes its
 markup, which no fixture can predict — so this exists to answer "does yt-dlp still

@@ -284,8 +284,10 @@ the check.
 Other rules from the same file that bite in new code:
 
 - `no-restricted-globals` bans `process` — _"Read configuration through
-  `@tgtools/config` instead."_ Only `packages/config/src/**` and `infra/scripts/**`
-  are exempt.
+  `@tgtools/config` instead."_ The exempt list is short and is where reading the
+  environment is the job: `packages/config/src/**`,
+  `packages/shared/src/lifecycle/**`, `apps/*/src/bootstrap.ts`,
+  `apps/*/src/migrate.ts` and `infra/scripts/**`.
 - `no-console` is an error. Take a `Logger` (`@tgtools/shared`) instead.
 - `@typescript-eslint/explicit-module-boundary-types` and `no-explicit-any` are on.
 - `@typescript-eslint/consistent-type-imports` — type-only imports must be

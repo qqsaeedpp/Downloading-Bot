@@ -1,3 +1,4 @@
+import { supportedPlatformsFa } from '@tgtools/feature-downloader';
 import { createHelpFeature } from '@tgtools/feature-help';
 import { createStartFeature } from '@tgtools/feature-start';
 import { bytesToMegabytes } from '@tgtools/shared';
@@ -16,10 +17,15 @@ export function registerFeatures(container: BotContainer): {
   readonly features: readonly BotFeature[];
   readonly commands: readonly FeatureCommand[];
 } {
+  // The platform list comes from the downloader's own label table, so the
+  // welcome screen cannot disagree with what the bot actually accepts.
+  const supportedPlatforms = supportedPlatformsFa();
+
   const features: BotFeature[] = [
-    createStartFeature(),
+    createStartFeature({ supportedPlatforms }),
     createHelpFeature({
       maxUploadMegabytes: Math.floor(bytesToMegabytes(container.config.limits.maxUploadBytes)),
+      supportedPlatforms,
     }),
     container.downloader.botFeature,
   ];

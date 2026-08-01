@@ -58,3 +58,4 @@ jobs:
           SMOKE_TIKTOK_URL: ${{ secrets.SMOKE_TIKTOK_URL }}
           SMOKE_PINTEREST_URL: ${{ secrets.SMOKE_PINTEREST_URL }}
           SMOKE_X_URL: ${{ secrets.SMOKE_X_URL }}
+          SMOKE_YOUTUBE_URL: ${{ secrets.SMOKE_YOUTUBE_URL }}

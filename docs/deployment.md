@@ -11,7 +11,7 @@ has to remember.
 
 - Docker Engine 24+ with the Compose v2 plugin (`docker compose`, not `docker-compose`).
 - A bot token from [@BotFather](https://t.me/BotFather).
-- Outbound HTTPS to `api.telegram.org`, to the four platforms' CDNs, and to
+- Outbound HTTPS to `api.telegram.org`, to the five platforms' CDNs, and to
   `github.com` at build time (the images download the pinned `yt-dlp_linux`).
 - Disk for the `downloads` volume. It is scratch space — every job creates and
   deletes its own directory — but it must hold the largest concurrent set of
@@ -46,8 +46,11 @@ Two things about `.env.example` that surprise people:
   ```
   Those `.env` values matter only when you run the processes on the host
   (`npm run dev:bot`) against `docker-compose.dev.yml`.
-- **`YTDLP_PATH`, `FFMPEG_PATH`, `FFPROBE_PATH` come from the image**, not from
-  `x-app-env`. They are `ENV` directives in both Dockerfiles.
+- **`YTDLP_PATH`, `FFMPEG_PATH` and `FFPROBE_PATH` come from the image**, not from
+  `x-app-env`. `Dockerfile.worker` sets all three. `Dockerfile.bot` sets
+  **`YTDLP_PATH` only** — that image has no FFmpeg and nothing in the bot resolves
+  the other two, so pointing them at binaries that were never installed is exactly
+  the mistake it used to make.
 - **`DATABASE_POOL_MAX`, `QUEUE_REMOVE_COMPLETE_AFTER_SECONDS` and
   `QUEUE_REMOVE_FAIL_AFTER_SECONDS` are not in the `x-app-env` anchor**, so under
   Compose they always take their schema defaults (10, 3600, 604800). Add them to
@@ -120,7 +123,7 @@ migrate:
     context: .
     dockerfile: Dockerfile.worker
   restart: 'no'
-  command: ['node', '--experimental-strip-types', 'infra/scripts/migrate.ts']
+  command: ['node', 'apps/worker/dist/migrate.js']
   depends_on:
     postgres:
       condition: service_healthy
@@ -136,26 +139,35 @@ migrate:
 so a failed migration blocks the deploy instead of leaving a bot running against a
 schema it does not understand.
 
-The script itself (`infra/scripts/migrate.ts`) loads the config, builds a logger and
-calls `runMigrations` from `@tgtools/database`, which uses a dedicated single
-connection (`max: 1`) because Drizzle takes an advisory lock for the run. Applying
-twice is a no-op; CI asserts that.
+The entry point is `apps/worker/src/migrate.ts`: it loads the config, builds a
+logger and calls `runMigrations` from `@tgtools/database`, which uses a dedicated
+single connection (`max: 1`) because Drizzle takes an advisory lock for the run.
+Applying twice is a no-op; CI asserts that.
 
-> **Known gap.** `Dockerfile.worker`'s runtime stage copies `infra/migrations` but
-> **not** `infra/scripts`, and its build stage copies only `tsconfig.base.json`,
-> `packages/`, `features/` and `apps/`. `/app/infra/scripts/migrate.ts` therefore
-> does not exist in the image, and the `migrate` service as written exits with
-> `Cannot find module`. Until a `COPY infra/scripts ./infra/scripts` is added to the
-> runtime stage, run migrations from the host instead:
->
-> ```bash
-> npm ci && npm run build
-> DATABASE_URL='postgresql://tgtools:…@127.0.0.1:5432/telegram_tools' npm run db:migrate
-> ```
->
-> (`packages/database/src/migrate.ts` resolves `MIGRATIONS_FOLDER` relative to its
-> own location — three levels up, then `infra/migrations` — which is correct both
-> from source and from `dist`.)
+It lives **inside the worker app** rather than in `infra/scripts/`, and that is
+load-bearing rather than tidiness. A loose `.ts` file outside every package is
+compiled by nothing and copied by nothing: `Dockerfile.worker`'s build stage takes
+`packages/`, `features/` and `apps/`, so a script anywhere else is one the image
+silently does not contain, and the `migrate` service fails with `Cannot find
+module` on the first deploy. Because it sits under `apps/worker/src`, the ordinary
+`turbo run build` compiles it to `apps/worker/dist/migrate.js` alongside
+`bootstrap.js`, and the runtime stage copies it with everything else.
+
+The runtime stage also copies `infra/migrations`, which is where the SQL itself
+lives: `packages/database/src/migrate.ts` resolves `MIGRATIONS_FOLDER` relative to
+its own location — three levels up, then `infra/migrations` — which is correct both
+from source and from `dist`.
+
+To run migrations from the host instead (against `docker-compose.dev.yml`, or a
+database you reach directly):
+
+```bash
+npm run db:migrate
+```
+
+which is `node --env-file-if-exists=.env --import tsx apps/worker/src/migrate.ts`
+— the same entry point, run from source through `tsx`, reading `DATABASE_URL` from
+`.env` if one is present.
 
 ## 4. Health endpoints
 
@@ -171,16 +183,22 @@ Anything else returns 404. Readiness runs all checks in parallel under a single
 5 s budget; a check that throws is reported as `healthy: false` rather than
 propagating.
 
-**Bot readiness** (`apps/bot/src/bootstrap.ts`) — two checks:
+**Bot readiness** (`apps/bot/src/bootstrap.ts`) — three checks:
 
 ```ts
     checks: [
       healthCheck('postgres', () => container.database.ping()),
       healthCheck('redis', () => container.redis.ping()),
+      // yt-dlp, and ONLY yt-dlp. The bot inspects; it never decodes, muxes or
+      // re-encodes, so asserting FFmpeg here would fail a container that is
+      // working perfectly.
+      healthCheck('yt-dlp', () => assertExecutable(config.binaries.ytDlp)),
     ],
 ```
 
-`ping()` is `select 1` for Postgres and a `PING`/`PONG` round trip for Redis.
+`ping()` is `select 1` for Postgres and a `PING`/`PONG` round trip for Redis. The
+bot's `assertExecutable` returns early for a bare command name — a path with no
+separator is resolved by the OS at spawn time, so there is nothing to stat.
 
 **Worker readiness** (`apps/worker/src/bootstrap.ts`) — six checks:
 
@@ -198,6 +216,23 @@ propagating.
 `assertExecutable` is `access(path, constants.X_OK)`; `ensureWritable` creates the
 root, makes a temporary directory in it and removes it.
 
+The asymmetry is deliberate and is the quickest way to confirm a correct
+deployment by hand:
+
+```bash
+docker compose exec worker which ffmpeg   # must succeed
+docker compose exec bot    which yt-dlp   # must succeed
+docker compose exec bot    which ffmpeg   # EXPECTED TO FAIL — this is correct
+```
+
+The bot image has never installed FFmpeg, and it no longer sets `FFMPEG_PATH` or
+`FFPROBE_PATH` either. Inspection is `yt-dlp --dump-single-json`, which decodes
+nothing; `YtDlpNodeRunner.dumpJson` runs the binary through `execFile` directly
+rather than through `ytdlp-nodejs` precisely so that no FFmpeg dependency is
+dragged into a process that has no use for one. A non-empty
+`docker compose exec bot which ffmpeg` means someone has added a dependency that
+belongs in the worker.
+
 Separately, the worker refuses to start at all if `probeToolchain()` cannot get a
 version out of yt-dlp — _"Fail loudly at startup rather than on the first user's
 download."_
@@ -209,15 +244,24 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD node -e "fetch('http://127.0.0.1:'+(process.env.WORKER_HEALTH_PORT||3002)+'/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 ```
 
-`docker-compose.yml` publishes **no** host ports — everything sits on the internal
-bridge network. To look at readiness by hand (both images have `curl`):
+`docker-compose.yml` publishes the two health ports and nothing else, bound to
+loopback: `127.0.0.1:${BOT_HEALTH_PORT:-3001}:3001` and the worker's equivalent on 3002. Postgres and Redis have no host mapping at all and stay on the internal
+bridge network. So readiness is reachable from the host:
+
+```bash
+curl -fsS http://127.0.0.1:3001/health/ready | jq
+curl -fsS http://127.0.0.1:3002/health/ready | jq
+```
+
+or from inside a container (both images have `curl`):
 
 ```bash
 docker compose exec bot    curl -s localhost:3001/health/ready
 docker compose exec worker curl -s localhost:3002/health/ready
 ```
 
-Add a `ports:` mapping if an external load balancer or monitoring agent needs them.
+Change the bind address only if an external load balancer or monitoring agent
+genuinely needs it; the endpoints are for the host's monitoring, not the internet.
 
 ## 5. Graceful shutdown
 
@@ -356,7 +400,8 @@ args:
 Both images download `yt-dlp_linux` from the GitHub release and run `--version` at
 build time, so a truncated download fails the build rather than the first user's
 link. The bot image carries yt-dlp too — it runs metadata extraction only, because
-a quality menu has to reflect the formats a post really offers.
+a quality menu has to reflect the formats a post really offers. It does **not**
+carry FFmpeg, and must not start to: see §4.
 
 The procedure:
 
@@ -458,7 +503,7 @@ To ship logs elsewhere, replace the `x-logging` anchor with your driver of choic
 | `docker compose up` fails immediately with `TELEGRAM_BOT_TOKEN is required`                                                                    | `.env` missing or the variable is empty. Compose's `:?` interpolation, not the app.                                                                                                                                       |
 | `fatal: bot failed to start: ConfigurationError: Invalid configuration:`                                                                       | One of the `assertCoherent` rules in §1. The message lists every violated rule.                                                                                                                                           |
 | `fatal: worker failed to start: yt-dlp is not usable at "/usr/local/bin/yt-dlp"`                                                               | `probeToolchain()` got no version. Bad `YTDLP_PATH`, or the release download in the image build produced a broken binary.                                                                                                 |
-| `migrate` exits non-zero with `Cannot find module '/app/infra/scripts/migrate.ts'`                                                             | The known gap in §3 — `infra/scripts` is not copied into the image. Run migrations from the host.                                                                                                                         |
+| `migrate` exits non-zero with `Cannot find module '/app/apps/worker/dist/migrate.js'`                                                          | The image was built before the migration entry point moved into the worker app, or the build stage did not run. `docker compose build --no-cache migrate`.                                                                |
 | `bot`/`worker` never start, stuck on `migrate`                                                                                                 | `service_completed_successfully` is unsatisfied. `docker compose logs migrate`.                                                                                                                                           |
 | Worker healthy, jobs queue but never run                                                                                                       | Bot and worker on different Redis instances, or the worker is paused mid-shutdown. Check `download worker started` in the worker log.                                                                                     |
 | `job stalled` warnings, files downloaded twice                                                                                                 | `DOWNLOAD_JOB_LOCK_DURATION_MS` too low for a single download step. BullMQ renews at half the duration but only while the processor yields.                                                                               |
@@ -468,7 +513,9 @@ To ship logs elsewhere, replace the `x-logging` anchor with your driver of choic
 | Disk creeps up over days                                                                                                                       | Orphan sweep not running, or `ORPHAN_WORKSPACE_MAX_AGE_HOURS` too high. The maintenance loop runs every `MAINTENANCE_INTERVAL_MS` and once at startup; look for `removed orphaned workspace`.                             |
 | Log line: _"authenticated attempt failed in a way that suggests an expired session; retrying anonymously — refresh this platform cookie file"_ | Exactly what it says. The retry rescued the link; the cookie file is stale.                                                                                                                                               |
 | Log line: _"cookie file is not in Netscape format and will be ignored"_                                                                        | Usually a JSON export from a browser extension. Re-export as `cookies.txt`.                                                                                                                                               |
-| All four platforms suddenly return `MEDIA_NOT_FOUND` or `LOGIN_REQUIRED`                                                                       | Extractor drift after a site change. Run the smoke workflow, then bump `YTDLP_VERSION` (§8).                                                                                                                              |
+| Every platform suddenly returns `MEDIA_NOT_FOUND` or `LOGIN_REQUIRED`                                                                          | Extractor drift after a site change. Run the smoke workflow, then bump `YTDLP_VERSION` (§8).                                                                                                                              |
+| YouTube alone returns `LOGIN_REQUIRED` ("Sign in to confirm you're not a bot")                                                                 | A datacentre IP range YouTube distrusts. `YOUTUBE_COOKIES_PATH` is the only thing that answers it — the anonymous retry other platforms use is switched off for YouTube because it cannot help.                           |
+| `docker compose exec bot which ffmpeg` finds nothing                                                                                           | Correct, and deliberate. The bot inspects only. If it ever needs FFmpeg, the work has landed in the wrong process (§4).                                                                                                   |
 | Worker container SIGKILLed during deploys, files left on the volume                                                                            | `stop_grace_period` is not larger than `WORKER_SHUTDOWN_GRACE_MS` (§5).                                                                                                                                                   |
 | Progress messages stop updating but the job completes                                                                                          | Normal throttling, or Telegram 429s. `PROGRESS_UPDATE_INTERVAL_MS` / `PROGRESS_UPDATE_MIN_PERCENT` control the rate; `message is not modified` is classified as `not_modified` and deliberately not treated as a failure. |
 | Users see _"چند دانلود فعال دارید"_ constantly                                                                                                 | `MAX_ACTIVE_JOBS_PER_USER` (default 2), or jobs stuck in an active status because a worker died without releasing them.                                                                                                   |

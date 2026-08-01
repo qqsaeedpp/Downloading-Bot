@@ -62,7 +62,7 @@ export class YtDlpInfoMapper {
         likeCount: info.like_count,
         commentCount: info.comment_count,
       },
-      mediaKind: classifyMediaKind(formats, info),
+      mediaKind: classifyMediaKind(formats, info, thumbnails.length),
       obtainedWithCookies: context.obtainedWithCookies,
       formats,
     };
@@ -130,6 +130,7 @@ function toEngineFormat(raw: RawFormat): EngineMediaFormat {
 export function classifyMediaKind(
   formats: readonly EngineMediaFormat[],
   info: Pick<RawInfo, 'thumbnail' | 'ext' | 'duration'>,
+  thumbnailCount = 0,
 ): MediaKind {
   const hasVideo = formats.some((format) => format.isProgressive || format.isVideoOnly);
   if (hasVideo) return MediaKind.Video;
@@ -140,6 +141,10 @@ export function classifyMediaKind(
   const imageExtensions = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
   const looksLikeImage =
     info.thumbnail !== undefined ||
+    // A photo tweet comes back with an empty `formats` array and its images in
+    // `thumbnails`. Reading only the singular `thumbnail` is what left those
+    // posts classified as `unknown`, which in turn let the audio ladder run.
+    thumbnailCount > 0 ||
     (info.ext !== undefined && imageExtensions.has(info.ext.toLowerCase())) ||
     formats.some((format) => imageExtensions.has(format.ext.toLowerCase()));
 

@@ -1,3 +1,4 @@
+import { access, constants } from 'node:fs/promises';
 import { loadConfig } from '@tgtools/config';
 import {
   describeError,
@@ -52,6 +53,11 @@ async function main(): Promise<void> {
     checks: [
       healthCheck('postgres', () => container.database.ping()),
       healthCheck('redis', () => container.redis.ping()),
+      // yt-dlp, and ONLY yt-dlp. The bot inspects; it never decodes, muxes or
+      // re-encodes, so asserting FFmpeg here would fail a container that is
+      // working perfectly — and would be a standing invitation to install a
+      // dependency this process has no use for.
+      healthCheck('yt-dlp', () => assertExecutable(config.binaries.ytDlp)),
     ],
   });
 
@@ -73,6 +79,15 @@ async function main(): Promise<void> {
       logger.info('bot is listening', { username: info.username, id: info.id });
     },
   });
+}
+
+/**
+ * Only meaningful for an absolute path. A bare command name — the schema
+ * default — is resolved by the OS at spawn time, so there is nothing to stat.
+ */
+async function assertExecutable(path: string): Promise<void> {
+  if (!path.includes('/') && !path.includes('\\')) return;
+  await access(path, constants.X_OK);
 }
 
 main().catch((error: unknown) => {

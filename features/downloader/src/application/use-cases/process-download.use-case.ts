@@ -22,6 +22,7 @@ import type {
   TelegramMediaSenderPort,
 } from '../../domain/ports/supporting-ports.js';
 import { ProgressThrottler } from '../services/progress-throttler.js';
+import { ProgressWriter } from '../services/progress-writer.js';
 
 export interface ProcessDownloadDependencies {
   readonly downloader: MediaDownloaderPort;
@@ -117,11 +118,17 @@ export class ProcessDownloadUseCase {
       timeoutMs: deps.jobTimeoutMs,
       label: 'download-job',
     });
+    const progressWriter = new ProgressWriter({
+      jobId: job.id,
+      requestId: payload.requestId,
+      logger,
+      update: (input) => deps.jobs.updateProgress(input),
+    });
     let media: DownloadedMedia | undefined;
 
     try {
       await reporter.onStage(DownloadStage.Downloading);
-      media = await this.#download(payload, reporter, scope.signal);
+      media = await this.#download(payload, reporter, scope.signal, progressWriter);
 
       // The file exists; from here on the work is local. Recorded as its own
       // state — rather than folded into `downloading` — because it is the phase
@@ -177,6 +184,10 @@ export class ProcessDownloadUseCase {
       return outcome;
     } finally {
       scope.dispose();
+      // Flushes the last useful sample, then stops accepting more. Runs on
+      // every path, so a completed, failed or cancelled job leaves no write
+      // scheduled behind it.
+      await progressWriter.close();
       // Unconditional. The workspace is deleted whether the job succeeded,
       // failed, timed out or was cancelled — anything less accumulates on a
       // shared volume until the disk is gone.
@@ -217,6 +228,7 @@ export class ProcessDownloadUseCase {
     payload: DownloadJobPayload,
     reporter: DownloadProgressReporter,
     signal: AbortSignal,
+    progressWriter: ProgressWriter,
   ): Promise<DownloadedMedia> {
     const throttler = new ProgressThrottler({
       clock: this.deps.clock,
@@ -235,25 +247,22 @@ export class ProcessDownloadUseCase {
       {
         signal,
         onProgress: async (progress: DownloadProgress) => {
-          // The database write is cheap and unconditional; the Telegram edit is
-          // neither, so only that one goes through the throttler.
-          await this.deps.jobs.updateProgress({
-            jobId: payload.jobId,
-            progressPercent: Math.round(progress.percent ?? 0),
-            downloadedBytes: progress.downloadedBytes,
-            totalBytes: progress.totalBytes,
-          });
+          // Fire-and-forget by design: the writer normalises, coalesces and
+          // swallows its own failures, so a rejected UPDATE can no longer
+          // surface as an unhandled rejection and take the worker down.
+          progressWriter.submit(progress);
+          // The Telegram edit is the expensive one, so only it is throttled.
           if (throttler.shouldEmit(progress)) await reporter.onProgress(progress);
         },
         onStageChange: async (stage) => {
           throttler.reset();
           if (stage === DownloadStage.Normalizing) {
-            await this.deps.jobs.updateProgress({
-              jobId: payload.jobId,
-              progressPercent: 100,
-              downloadedBytes: 0,
-              totalBytes: undefined,
-            });
+            // Downloading is finished and the byte counter is about to restart
+            // against a different total; tell the writer so its monotonic guard
+            // does not discard the new phase.
+            progressWriter.submit({ downloadedBytes: 0, totalBytes: undefined, percent: 100 });
+            await progressWriter.flush();
+            progressWriter.beginPhase();
           }
           await reporter.onStage(stage);
         },

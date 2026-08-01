@@ -1,4 +1,5 @@
-import { DownloadStage, DownloadType } from '@tgtools/shared';
+import { ALL_MEDIA_PLATFORMS, DownloadStage, DownloadType } from '@tgtools/shared';
+import type { MediaPlatform } from '@tgtools/shared';
 import { assertNever, formatBytes, formatDuration, renderProgressBar } from '@tgtools/shared';
 import { escapeHtml } from '@tgtools/telegram';
 import { DownloadFailureCode } from '../../../domain/errors/download-failure-code.js';
@@ -20,13 +21,43 @@ export function toPersianDigits(value: string): string {
   return value.replace(/[0-9]/g, (digit) => PERSIAN_DIGITS[Number(digit)] ?? digit);
 }
 
+/**
+ * Typed as a total record, so adding a platform to the vocabulary without a
+ * Persian name is a compile error rather than a raw slug shown to a user.
+ *
+ * Declared before `fa` on purpose: `fa` reads it while initialising, and a
+ * `const` referenced from its own temporal dead zone throws at import.
+ */
+export const PLATFORM_LABELS_FA: Readonly<Record<MediaPlatform, string>> = {
+  instagram: 'اینستاگرام',
+  tiktok: 'تیک‌تاک',
+  pinterest: 'پینترست',
+  x: 'ایکس (توییتر)',
+  youtube: 'یوتیوب',
+};
+
+/**
+ * The supported platforms as a Persian list: "الف، ب، ج و د".
+ *
+ * Derived rather than written out, because it previously was written out — in
+ * three separate places — and adding YouTube left all three telling users that
+ * YouTube was not supported, on the very screen they reached by pasting a
+ * YouTube link.
+ */
+export function supportedPlatformsFa(): string {
+  const labels = ALL_MEDIA_PLATFORMS.map((platform) => PLATFORM_LABELS_FA[platform]);
+  if (labels.length <= 1) return labels[0] ?? '';
+  const last = labels[labels.length - 1] ?? '';
+  return `${labels.slice(0, -1).join('، ')} و ${last}`;
+}
+
 export const fa = {
   inspecting: '⏳ در حال بررسی لینک…',
 
   noUrlFound:
     'سلام! 👋\n\n' +
     'لینک یک پست، ریل، ویدیو یا پین را برایم بفرستید تا فایلش را برایتان دانلود کنم.\n\n' +
-    'پلتفرم‌های پشتیبانی‌شده: اینستاگرام، تیک‌تاک، پینترست و ایکس (توییتر).',
+    `پلتفرم‌های پشتیبانی‌شده: ${supportedPlatformsFa()}.`,
 
   multipleUrls:
     '⚠️ در هر پیام فقط یک لینک بفرستید.\n\n' +
@@ -163,7 +194,7 @@ export const fa = {
       case DownloadFailureCode.UnsupportedPlatform:
         return (
           '❌ این لینک پشتیبانی نمی‌شود.\n\n' +
-          'در حال حاضر اینستاگرام، تیک‌تاک، پینترست و ایکس (توییتر) پشتیبانی می‌شوند.'
+          `در حال حاضر ${supportedPlatformsFa()} پشتیبانی می‌شوند.`
         );
       case DownloadFailureCode.UnsupportedMedia:
         return '❌ محتوای قابل دانلودی در این لینک پیدا نشد.';
@@ -201,11 +232,4 @@ export const fa = {
         return assertNever(code, 'download failure code');
     }
   },
-} as const;
-
-export const PLATFORM_LABELS_FA = {
-  instagram: 'اینستاگرام',
-  tiktok: 'تیک‌تاک',
-  pinterest: 'پینترست',
-  x: 'ایکس (توییتر)',
 } as const;
