@@ -2,7 +2,7 @@ import type { AppConfig } from '@tgtools/config';
 import type { Db } from '@tgtools/database';
 import type { EngineBundle } from '@tgtools/downloader-engine';
 import type { Clock, IdGenerator, Logger, MediaPlatform } from '@tgtools/shared';
-import { hashUrl, stripUrlQuery } from '@tgtools/shared';
+import { hashUrl } from '@tgtools/shared';
 import type { AppContext, BotFeature } from '@tgtools/telegram';
 import type { Queue } from 'bullmq';
 import { Composer } from 'grammy';
@@ -215,9 +215,19 @@ async function resolveUrl(
     // away from the extractor.
     requestUrl: resolved.requestUrl,
     storable: {
+      // NOT `stripUrlQuery`. The worker re-fetches `sourceUrl`, and for YouTube
+      // the video's identity lives entirely in `?v=…` — blanket-stripping the
+      // query turned every job into `https://www.youtube.com/watch`, which
+      // names no video at all.
+      //
+      // `normalizedUrl` is the right privacy-preserving form: the platform
+      // policy has already removed its tracking parameters (`igshid`, `si`,
+      // `list`, share ids), the host is lowercased and the fragment and any
+      // credentials are gone. It is what the cache key is derived from, so it
+      // is by construction the minimum needed to identify the media.
       sourceUrl: options.config.privacy.storeFullSourceUrl
         ? resolved.originalUrl
-        : stripUrlQuery(resolved.originalUrl),
+        : resolved.normalizedUrl,
       normalizedUrl: resolved.normalizedUrl,
       normalizedUrlHash: hashUrl(resolved.normalizedUrl),
     },

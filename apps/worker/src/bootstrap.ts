@@ -1,6 +1,8 @@
 import { access, constants } from 'node:fs/promises';
 import { loadConfig } from '@tgtools/config';
+import { assertEnumCovers } from '@tgtools/database';
 import {
+  ALL_MEDIA_PLATFORMS,
   describeError,
   healthCheck,
   installGracefulShutdown,
@@ -63,6 +65,9 @@ async function main(): Promise<void> {
     checks: [
       healthCheck('postgres', () => container.database.ping()),
       healthCheck('redis', () => container.redis.ping()),
+      healthCheck('platform-enum', () =>
+        assertEnumCovers(container.database.db, 'media_platform', ALL_MEDIA_PLATFORMS),
+      ),
       healthCheck('yt-dlp', () => assertExecutable(config.binaries.ytDlp)),
       healthCheck('ffmpeg', () => assertExecutable(config.binaries.ffmpeg)),
       healthCheck('ffprobe', () => assertExecutable(config.binaries.ffprobe)),

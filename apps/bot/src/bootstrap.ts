@@ -1,6 +1,8 @@
 import { access, constants } from 'node:fs/promises';
 import { loadConfig } from '@tgtools/config';
+import { assertEnumCovers } from '@tgtools/database';
 import {
+  ALL_MEDIA_PLATFORMS,
   describeError,
   healthCheck,
   installGracefulShutdown,
@@ -53,6 +55,12 @@ async function main(): Promise<void> {
     checks: [
       healthCheck('postgres', () => container.database.ping()),
       healthCheck('redis', () => container.redis.ping()),
+      // Catches the deploy that rebuilt the images but skipped the migration.
+      // Without it, the symptom is every job for the new platform failing at
+      // INSERT with a SQL dump instead of a sentence.
+      healthCheck('platform-enum', () =>
+        assertEnumCovers(container.database.db, 'media_platform', ALL_MEDIA_PLATFORMS),
+      ),
       // yt-dlp, and ONLY yt-dlp. The bot inspects; it never decodes, muxes or
       // re-encodes, so asserting FFmpeg here would fail a container that is
       // working perfectly — and would be a standing invitation to install a
