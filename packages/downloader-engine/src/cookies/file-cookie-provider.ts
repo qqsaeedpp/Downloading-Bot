@@ -62,13 +62,20 @@ export class FileCookieProvider implements CookieProvider {
       this.#remember(platform, content, stats.mtimeMs);
       return content;
     } catch (error: unknown) {
-      // A missing or unreadable file must degrade to anonymous access, not to a
-      // failed job — the mount may simply not be configured on this host.
-      this.options.logger.warn('cookie file could not be read; continuing without it', {
-        platform,
-        path,
-        error: describeError(error),
-      });
+      // Still degrades to anonymous access rather than failing the job — but at
+      // ERROR level, because a path was CONFIGURED and could not be used. That
+      // is a misconfiguration, and treating it as a soft condition is how an
+      // operator ends up believing cookies are in play while every request goes
+      // out unauthenticated.
+      this.options.logger.error(
+        'cookie file is configured but unreadable; every request will go out UNAUTHENTICATED',
+        {
+          platform,
+          path,
+          hint: hintFor(error),
+          error: describeError(error),
+        },
+      );
       this.#remember(platform, undefined, 0);
       return undefined;
     }
@@ -77,6 +84,28 @@ export class FileCookieProvider implements CookieProvider {
   #remember(platform: MediaPlatform, content: string | undefined, mtimeMs: number): void {
     this.#cache.set(platform, { content, readAtMs: Date.now(), mtimeMs });
   }
+}
+
+/**
+ * Name the fix, not just the failure.
+ *
+ * `EACCES` is the one an operator hits and cannot diagnose from the message
+ * alone: the containers run as a non-root user, so a cookie file left owned by
+ * root with `0600` is invisible to them — and every download then silently goes
+ * out unauthenticated.
+ */
+function hintFor(error: unknown): string {
+  const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
+  if (code === 'EACCES' || code === 'EPERM') {
+    return 'the containers run as uid 1001; run `chown 1001:1001 <file>` on the host';
+  }
+  if (code === 'ENOENT') {
+    return 'no such file — check the path is the one INSIDE the container (/run/secrets/...), not the host path';
+  }
+  if (code === 'EISDIR') {
+    return 'this is a directory; Docker creates one when a bind-mount source is missing';
+  }
+  return 'check the mount, the path and the file ownership';
 }
 
 /**
