@@ -59,6 +59,10 @@ class FixtureRunner implements YtDlpRunner {
   version(): Promise<string | undefined> {
     return Promise.resolve('2026.07.04');
   }
+
+  jsRuntimeVersion(): Promise<string | undefined> {
+    return Promise.resolve('deno 2.9.4');
+  }
 }
 
 describe('media classification against captured extractor output', () => {

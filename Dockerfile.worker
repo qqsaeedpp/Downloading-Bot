@@ -10,6 +10,21 @@
 ARG YTDLP_VERSION=2026.07.04
 ARG NODE_VERSION=22
 
+# A JavaScript runtime is NOT optional for YouTube.
+#
+# Since yt-dlp 2025.11.12, solving YouTube's player challenge — the `n`
+# parameter that governs throttling, and the signature — requires an external JS
+# runtime. Without one, yt-dlp returns a severely reduced format list or none at
+# all, which is indistinguishable from a post having no media. That is exactly
+# how a 36-minute video ended up classified as a still image.
+#
+# Deno is the only runtime yt-dlp enables by default; the others are off for
+# security reasons. The `yt-dlp-ejs` half is already bundled in the official
+# `yt-dlp_linux` executable, so the runtime is all that is missing.
+# Pinned for the same reason yt-dlp is: a silent runtime change must not be able
+# to alter extraction behaviour between two builds of the same commit.
+ARG DENO_VERSION=v2.9.4
+
 # ── Stage 1: install dependencies ────────────────────────────────────────────
 FROM node:${NODE_VERSION}-bookworm-slim AS deps
 WORKDIR /app
@@ -51,16 +66,19 @@ RUN --mount=type=cache,target=/root/.npm \
 # ── Stage 3: runtime ─────────────────────────────────────────────────────────
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 ARG YTDLP_VERSION
+ARG DENO_VERSION
 
 ENV NODE_ENV=production \
     YTDLP_PATH=/usr/local/bin/yt-dlp \
     FFMPEG_PATH=/usr/bin/ffmpeg \
     FFPROBE_PATH=/usr/bin/ffprobe \
+    DENO_PATH=/usr/local/bin/deno \
     DOWNLOAD_DIR=/data/downloads
 
 # `tini` as PID 1 so SIGTERM reaches Node and the graceful shutdown actually
 # runs — without an init, a killed yt-dlp child becomes a zombie and the
 # container accumulates them until it runs out of process slots.
+# `unzip` is only needed by the Deno installer.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -68,6 +86,7 @@ RUN apt-get update \
         ffmpeg \
         python3 \
         tini \
+        unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # The single-file build, pinned by tag. Verified by running it once at build
@@ -78,6 +97,13 @@ RUN curl -fsSL --retry 3 \
         -o /usr/local/bin/yt-dlp \
     && chmod 0755 /usr/local/bin/yt-dlp \
     && /usr/local/bin/yt-dlp --version
+
+# The JavaScript runtime yt-dlp needs for YouTube's player challenge. The
+# official installer picks the right architecture; `DENO_INSTALL` puts the
+# binary on the default PATH, where yt-dlp looks for it without configuration.
+RUN curl -fsSL https://deno.land/install.sh \
+        | DENO_INSTALL=/usr/local sh -s "${DENO_VERSION}" \
+    && /usr/local/bin/deno --version
 
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules

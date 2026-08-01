@@ -138,4 +138,10 @@ export interface ToolchainInfo {
   readonly ytDlpVersion: string | undefined;
   readonly ffmpegVersion: string | undefined;
   readonly ffprobeVersion: string | undefined;
+  /**
+   * The external JavaScript runtime yt-dlp uses to solve YouTube's player
+   * challenge. `undefined` means YouTube extraction will return a reduced
+   * format list or none at all — which looks exactly like a post with no media.
+   */
+  readonly jsRuntimeVersion: string | undefined;
 }

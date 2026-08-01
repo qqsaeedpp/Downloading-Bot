@@ -30,6 +30,11 @@ export interface BinariesConfig {
   readonly ytDlp: string;
   readonly ffmpeg: string;
   readonly ffprobe: string;
+  /**
+   * External JavaScript runtime. Required by yt-dlp for YouTube since
+   * 2025.11.12; without it the format list comes back empty or reduced.
+   */
+  readonly jsRuntime: string;
 }
 
 export interface StorageConfig {

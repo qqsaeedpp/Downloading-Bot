@@ -9,6 +9,8 @@
 # =============================================================================
 ARG YTDLP_VERSION=2026.07.04
 ARG NODE_VERSION=22
+# Required for YouTube extraction; see the note in Dockerfile.worker.
+ARG DENO_VERSION=v2.9.4
 
 # ── Stage 1: install dependencies ────────────────────────────────────────────
 FROM node:${NODE_VERSION}-bookworm-slim AS deps
@@ -46,6 +48,7 @@ RUN --mount=type=cache,target=/root/.npm \
 # ── Stage 3: runtime ─────────────────────────────────────────────────────────
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 ARG YTDLP_VERSION
+ARG DENO_VERSION
 
 # No FFMPEG_PATH or FFPROBE_PATH, and no FFmpeg in the image.
 #
@@ -54,11 +57,16 @@ ARG YTDLP_VERSION
 # configuration at binaries that were never installed, and the inspection path
 # failed on a dependency it does not have. The config schema defaults both to a
 # bare command name, and nothing in the bot resolves them.
+#
+# Deno IS here, though. It is not a media dependency: yt-dlp needs it to solve
+# YouTube's player challenge, and that happens during extraction — which is
+# precisely what this process does.
 ENV NODE_ENV=production \
-    YTDLP_PATH=/usr/local/bin/yt-dlp
+    YTDLP_PATH=/usr/local/bin/yt-dlp \
+    DENO_PATH=/usr/local/bin/deno
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl python3 tini \
+    && apt-get install -y --no-install-recommends ca-certificates curl python3 tini unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # The bot runs yt-dlp for METADATA only — a quality menu has to reflect the
@@ -68,6 +76,12 @@ RUN curl -fsSL --retry 3 \
         -o /usr/local/bin/yt-dlp \
     && chmod 0755 /usr/local/bin/yt-dlp \
     && /usr/local/bin/yt-dlp --version
+
+# Without this the format list for a YouTube video comes back empty, and an
+# empty format list is indistinguishable from a post that has no media.
+RUN curl -fsSL https://deno.land/install.sh \
+        | DENO_INSTALL=/usr/local sh -s "${DENO_VERSION}" \
+    && /usr/local/bin/deno --version
 
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules

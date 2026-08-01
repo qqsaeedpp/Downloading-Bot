@@ -126,6 +126,7 @@ services:
       dockerfile: Dockerfile.worker
       args:
         YTDLP_VERSION: ${YTDLP_VERSION:-2026.07.04}
+        DENO_VERSION: ${DENO_VERSION:-v2.9.4}
     restart: "no"
     logging: *logging
     environment: *app-env
@@ -141,6 +142,7 @@ services:
       dockerfile: Dockerfile.bot
       args:
         YTDLP_VERSION: ${YTDLP_VERSION:-2026.07.04}
+        DENO_VERSION: ${DENO_VERSION:-v2.9.4}
     restart: unless-stopped
     logging: *logging
     environment:
@@ -172,6 +174,7 @@ services:
       dockerfile: Dockerfile.worker
       args:
         YTDLP_VERSION: ${YTDLP_VERSION:-2026.07.04}
+        DENO_VERSION: ${DENO_VERSION:-v2.9.4}
     restart: unless-stopped
     logging: *logging
     environment:

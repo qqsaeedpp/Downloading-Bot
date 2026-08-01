@@ -282,12 +282,13 @@ export class YtDlpMediaEngine implements MediaEngine {
   }
 
   async probeToolchain(): Promise<ToolchainInfo> {
-    const [ytDlpVersion, ffmpegVersion, ffprobeVersion] = await Promise.all([
+    const [ytDlpVersion, ffmpegVersion, ffprobeVersion, jsRuntimeVersion] = await Promise.all([
       this.options.runner.version(),
       this.options.normalizer.version(),
       this.options.ffprobe.version(),
+      this.options.runner.jsRuntimeVersion(),
     ]);
-    return { ytDlpVersion, ffmpegVersion, ffprobeVersion };
+    return { ytDlpVersion, ffmpegVersion, ffprobeVersion, jsRuntimeVersion };
   }
 
   async #runDownload(

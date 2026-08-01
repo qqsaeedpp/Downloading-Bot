@@ -1,6 +1,7 @@
 import { access, constants } from 'node:fs/promises';
 import { loadConfig } from '@tgtools/config';
 import { assertEnumCovers } from '@tgtools/database';
+import type { Logger } from '@tgtools/shared';
 import {
   ALL_MEDIA_PLATFORMS,
   describeError,
@@ -36,7 +37,10 @@ async function main(): Promise<void> {
     ytDlp: toolchain.ytDlpVersion ?? 'unknown',
     ffmpeg: toolchain.ffmpegVersion ?? 'unknown',
     ffprobe: toolchain.ffprobeVersion ?? 'unknown',
+    jsRuntime: toolchain.jsRuntimeVersion ?? 'MISSING',
   });
+
+  warnIfNoJsRuntime(logger, toolchain.jsRuntimeVersion);
 
   if (toolchain.ytDlpVersion === undefined) {
     // Fail loudly at startup rather than on the first user's download.
@@ -92,6 +96,24 @@ async function main(): Promise<void> {
 
 async function assertExecutable(path: string): Promise<void> {
   await access(path, constants.X_OK);
+}
+
+/**
+ * Loud, but not fatal.
+ *
+ * Since yt-dlp 2025.11.12 a JavaScript runtime is required to solve YouTube's
+ * player challenge; without one the format list comes back empty or heavily
+ * reduced, which is indistinguishable from a post that has no media. It affects
+ * exactly one platform, though, so refusing to start would take the other four
+ * down with it.
+ */
+export function warnIfNoJsRuntime(logger: Logger, version: string | undefined): void {
+  if (version !== undefined) return;
+  logger.error(
+    'no JavaScript runtime found — YouTube extraction will return few formats or none. ' +
+      'Install Deno (the images do this via the DENO_VERSION build arg) or set DENO_PATH. ' +
+      'Every other platform is unaffected.',
+  );
 }
 
 main().catch((error: unknown) => {

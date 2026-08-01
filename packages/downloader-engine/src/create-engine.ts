@@ -21,6 +21,8 @@ export interface EngineBinaries {
   readonly ytDlpPath: string;
   readonly ffmpegPath: string;
   readonly ffprobePath: string;
+  /** Defaults to `deno`, which is the only runtime yt-dlp enables by default. */
+  readonly jsRuntimePath?: string;
 }
 
 export interface EngineLimits {
@@ -123,6 +125,7 @@ export function createDownloaderEngine(options: CreateEngineOptions): EngineBund
     new YtDlpNodeRunner({
       binaryPath: binaries.ytDlpPath,
       ffmpegPath: binaries.ffmpegPath,
+      jsRuntimePath: binaries.jsRuntimePath ?? 'deno',
       logger,
     });
 

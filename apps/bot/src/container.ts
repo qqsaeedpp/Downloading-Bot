@@ -1,6 +1,7 @@
 import type { AppConfig } from '@tgtools/config';
 import type { DatabaseHandle } from '@tgtools/database';
 import { createDatabase } from '@tgtools/database';
+import type { EngineBundle } from '@tgtools/downloader-engine';
 import { createDownloaderEngine } from '@tgtools/downloader-engine';
 import type { DownloaderFeature } from '@tgtools/feature-downloader';
 import { RedisCancellationBus, createDownloaderFeature } from '@tgtools/feature-downloader';
@@ -26,6 +27,11 @@ export interface BotContainer {
   readonly redis: RedisHandle;
   readonly downloadQueue: Queue<DownloadJobPayload>;
   readonly bot: Bot<AppContext>;
+  /**
+   * Exposed so bootstrap can report the toolchain. The bot only ever calls
+   * `inspect` on it — every download happens in the worker.
+   */
+  readonly engine: EngineBundle;
   readonly users: UserRepository;
   readonly registerOrUpdateUser: RegisterOrUpdateUserUseCase;
   readonly downloader: DownloaderFeature;
@@ -61,6 +67,7 @@ export function createBotContainer(config: AppConfig): BotContainer {
       ytDlpPath: config.binaries.ytDlp,
       ffmpegPath: config.binaries.ffmpeg,
       ffprobePath: config.binaries.ffprobe,
+      jsRuntimePath: config.binaries.jsRuntime,
     },
     limits: {
       maxDownloadBytes: config.limits.maxDownloadBytes,
@@ -107,6 +114,7 @@ export function createBotContainer(config: AppConfig): BotContainer {
     redis,
     downloadQueue,
     bot,
+    engine,
     users,
     registerOrUpdateUser,
     downloader,

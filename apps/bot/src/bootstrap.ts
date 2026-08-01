@@ -1,6 +1,7 @@
 import { access, constants } from 'node:fs/promises';
 import { loadConfig } from '@tgtools/config';
 import { assertEnumCovers } from '@tgtools/database';
+import type { Logger } from '@tgtools/shared';
 import {
   ALL_MEDIA_PLATFORMS,
   describeError,
@@ -30,7 +31,17 @@ async function main(): Promise<void> {
 
   // `version` and `env` are already on every line via the logger's base
   // bindings; repeating them here would emit a duplicated JSON key.
-  logger.info('starting bot', { node: process.version });
+  //
+  // The toolchain is probed here too, even though this process never downloads:
+  // extraction is what needs the JavaScript runtime, and extraction is exactly
+  // what the bot does.
+  const toolchain = await container.engine.engine.probeToolchain();
+  logger.info('starting bot', {
+    node: process.version,
+    ytDlp: toolchain.ytDlpVersion ?? 'unknown',
+    jsRuntime: toolchain.jsRuntimeVersion ?? 'MISSING',
+  });
+  warnIfNoJsRuntime(logger, toolchain.jsRuntimeVersion);
 
   // Middleware order is the security order: identity before rate limiting,
   // rate limiting before anything that costs time or money.
@@ -96,6 +107,23 @@ async function main(): Promise<void> {
 async function assertExecutable(path: string): Promise<void> {
   if (!path.includes('/') && !path.includes('\\')) return;
   await access(path, constants.X_OK);
+}
+
+/**
+ * Loud, but not fatal.
+ *
+ * Since yt-dlp 2025.11.12 a JavaScript runtime is required to solve YouTube's
+ * player challenge; without one the format list comes back empty or heavily
+ * reduced, which is indistinguishable from a post that has no media. It affects
+ * exactly one platform, so refusing to start would take the other four with it.
+ */
+function warnIfNoJsRuntime(logger: Logger, version: string | undefined): void {
+  if (version !== undefined) return;
+  logger.error(
+    'no JavaScript runtime found — YouTube extraction will return few formats or none. ' +
+      'Install Deno (the images do this via the DENO_VERSION build arg) or set DENO_PATH. ' +
+      'Every other platform is unaffected.',
+  );
 }
 
 main().catch((error: unknown) => {

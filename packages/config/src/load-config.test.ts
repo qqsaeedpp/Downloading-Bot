@@ -32,7 +32,7 @@ describe('loadConfig', () => {
       telegram: { botToken: BOT_TOKEN, apiRoot: undefined, useLocalApi: false },
       database: { url: DATABASE_URL, poolMax: 10 },
       redis: { url: REDIS_URL },
-      binaries: { ytDlp: 'yt-dlp', ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' },
+      binaries: { ytDlp: 'yt-dlp', ffmpeg: 'ffmpeg', ffprobe: 'ffprobe', jsRuntime: 'deno' },
       storage: {
         downloadDir: '/data/downloads',
         minFreeDiskBytes: 2_147_483_648,

@@ -65,6 +65,7 @@ export function createWorkerContainer(config: AppConfig): WorkerContainer {
       ytDlpPath: config.binaries.ytDlp,
       ffmpegPath: config.binaries.ffmpeg,
       ffprobePath: config.binaries.ffprobe,
+      jsRuntimePath: config.binaries.jsRuntime,
     },
     limits: {
       maxDownloadBytes: config.limits.maxDownloadBytes,

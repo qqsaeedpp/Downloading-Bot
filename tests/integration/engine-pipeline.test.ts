@@ -74,6 +74,10 @@ class ScriptedRunner implements YtDlpRunner {
   version(): Promise<string | undefined> {
     return Promise.resolve('2026.01.01');
   }
+
+  jsRuntimeVersion(): Promise<string | undefined> {
+    return Promise.resolve('deno 2.9.4');
+  }
 }
 
 const REEL_INFO = {

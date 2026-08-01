@@ -35,6 +35,12 @@ export interface YtDlpRunner {
   /** A real download, with live progress and a killable process. */
   download(invocation: YtDlpDownloadInvocation): Promise<YtDlpResult>;
   version(): Promise<string | undefined>;
+  /**
+   * The external JavaScript runtime's version, or `undefined` when none is
+   * installed. Reported separately from yt-dlp's because its absence degrades
+   * exactly one platform rather than the whole engine.
+   */
+  jsRuntimeVersion(): Promise<string | undefined>;
 }
 
 /**

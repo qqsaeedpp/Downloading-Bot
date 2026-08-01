@@ -49,6 +49,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       ytDlp: env.YTDLP_PATH,
       ffmpeg: env.FFMPEG_PATH,
       ffprobe: env.FFPROBE_PATH,
+      jsRuntime: env.DENO_PATH,
     },
 
     storage: {

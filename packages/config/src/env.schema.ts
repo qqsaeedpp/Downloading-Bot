@@ -59,6 +59,9 @@ export const envSchema = z.object({
   YTDLP_PATH: z.string().trim().min(1).default('yt-dlp'),
   FFMPEG_PATH: z.string().trim().min(1).default('ffmpeg'),
   FFPROBE_PATH: z.string().trim().min(1).default('ffprobe'),
+  // The JavaScript runtime yt-dlp uses for YouTube's player challenge. yt-dlp
+  // finds it on PATH itself; this is used to report its version at startup.
+  DENO_PATH: z.string().trim().min(1).default('deno'),
 
   DOWNLOAD_DIR: z.string().trim().min(1).default('/data/downloads'),
 

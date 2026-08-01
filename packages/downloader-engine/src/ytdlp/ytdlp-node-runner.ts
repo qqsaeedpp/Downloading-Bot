@@ -44,6 +44,12 @@ export interface YtDlpNodeRunnerOptions {
    * required to have FFmpeg on disk at all.
    */
   readonly ffmpegPath: string;
+  /**
+   * The external JavaScript runtime yt-dlp needs for YouTube. A bare command
+   * name is fine — yt-dlp finds it on PATH itself; this is only used to report
+   * its version.
+   */
+  readonly jsRuntimePath?: string;
   readonly logger: Logger;
   readonly execFileImpl?: ExecFileAsync;
 }
@@ -169,6 +175,23 @@ export class YtDlpNodeRunner implements YtDlpRunner {
       this.#options.logger.warn('could not determine yt-dlp version', {
         error: describeError(error),
       });
+      return undefined;
+    }
+  }
+
+  /**
+   * Reported so a deployment missing it can be spotted from the startup log
+   * rather than from a user's empty quality menu.
+   */
+  async jsRuntimeVersion(): Promise<string | undefined> {
+    try {
+      const { stdout } = await execFileAsync(this.#options.jsRuntimePath ?? 'deno', ['--version'], {
+        timeout: 10_000,
+        maxBuffer: 64 * 1024,
+      });
+      return stdout.split(/\r?\n/)[0]?.trim();
+    } catch {
+      // Absent, not broken. The caller decides how loudly to say so.
       return undefined;
     }
   }
