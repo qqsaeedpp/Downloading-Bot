@@ -1,13 +1,27 @@
 import { MediaKind, MediaPlatform, createNoopLogger } from '@tgtools/shared';
 import { describe, expect, it } from 'vitest';
 import { EngineError, EngineFailureCode } from '../errors/engine-error.js';
+import type { MapInfoContext } from './info-mapper.js';
 import { YtDlpInfoMapper, toIsoDate } from './info-mapper.js';
 
 const mapper = new YtDlpInfoMapper(createNoopLogger());
-const context = {
+
+/**
+ * Built once and spread at the call sites that need a different platform or
+ * cookie flag, so a newly required field is added here rather than at fifteen
+ * `map()` calls. Typed on purpose: leaving it inferred is what let these tests
+ * keep compiling against a context the mapper no longer accepted.
+ *
+ * Both platforms exercised below — Instagram and Pinterest — publish standalone
+ * stills, so `canBeImage` is true. A video-only platform such as YouTube is
+ * covered separately, where false is what stops a blocked extraction being
+ * offered as a picture.
+ */
+const context: MapInfoContext = {
   sourceUrl: 'https://www.instagram.com/reel/abc',
   platform: MediaPlatform.Instagram,
   obtainedWithCookies: false,
+  canBeImage: true,
 };
 
 describe('YtDlpInfoMapper', () => {

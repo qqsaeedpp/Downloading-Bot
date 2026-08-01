@@ -15,7 +15,12 @@ function createRunner(exec: ReturnType<typeof vi.fn>) {
   });
 }
 
-type YtDlpNodeRunnerExec = ConstructorParameters<typeof YtDlpNodeRunner>[0]['execFileImpl'];
+// `execFileImpl` is optional on the options object, so the derived type carries
+// `| undefined`. Under `exactOptionalPropertyTypes` that is exactly what an
+// optional property may NOT be assigned, hence the unwrap.
+type YtDlpNodeRunnerExec = NonNullable<
+  ConstructorParameters<typeof YtDlpNodeRunner>[0]['execFileImpl']
+>;
 
 describe('YtDlpNodeRunner.dumpJson', () => {
   it('inspects without touching FFmpeg', async () => {

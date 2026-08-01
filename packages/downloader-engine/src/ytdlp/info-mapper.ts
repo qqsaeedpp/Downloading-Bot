@@ -149,17 +149,24 @@ export function classifyMediaKind(
   const hasAudio = formats.some((format) => format.isAudioOnly);
   if (hasAudio) return MediaKind.Audio;
 
-  // A still has no duration. So a post that reports one is timed media whose
-  // formats we simply failed to read — not a picture.
+  // Past this point `formats` holds nothing playable, and the two platform
+  // families need opposite answers from the same document.
   //
-  // This is what a blocked YouTube extraction looks like: the title, uploader
-  // and view count survive because they come from the initial page data, while
-  // `formats` is empty because the player response was gated. Every YouTube
-  // video also has a thumbnail, so without this rule a 36-minute video was
-  // classified as an image and offered with a single "download picture" button.
-  if (info.duration !== undefined && info.duration > 0) return MediaKind.Video;
+  // On a video-only platform, empty formats mean the extraction failed. The
+  // title, uploader and view count still arrive from the initial page data, and
+  // every video has a thumbnail — which is how a blocked 36-minute YouTube video
+  // came to be offered with a single "download picture" button. A reported
+  // duration is the tell: a still has none, so this is timed media we failed to
+  // read. Say Video and let the empty option list surface the real error.
+  if (options.canBeImage === false) {
+    return info.duration !== undefined && info.duration > 0 ? MediaKind.Video : MediaKind.Unknown;
+  }
 
-  if (options.canBeImage === false) return MediaKind.Unknown;
+  // On a platform that does publish stills, the same duration means nothing of
+  // the sort: a TikTok slideshow and an Instagram carousel are set to a music
+  // track and report ITS length. Reading that as "therefore video" replaced a
+  // working picture button with an empty keyboard, so the duration is not
+  // consulted here at all — the thumbnails below are the honest signal.
 
   const imageExtensions = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
   const looksLikeImage =

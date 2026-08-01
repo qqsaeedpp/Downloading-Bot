@@ -70,7 +70,9 @@ describe('buildBaseArgs', () => {
 
 describe('buildInspectArgs', () => {
   it('asks for one JSON document and downloads nothing', () => {
-    const args = buildInspectArgs(base);
+    // The tolerance flag is asserted on its own below; this case only cares
+    // that inspection asks for JSON and pulls no media.
+    const args = buildInspectArgs({ ...base, ignoreNoFormatsError: false });
     expect(args).toContain('--dump-single-json');
     expect(args).toContain('--skip-download');
   });

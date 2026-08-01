@@ -166,6 +166,43 @@ describe('ProgressWriter', () => {
     expect(writes).toHaveLength(1);
   });
 
+  it('records the completing 100% even though its byte counter has reset', async () => {
+    // What the download-to-normalize transition submits: percent 100 with the
+    // byte counter already zeroed for the next phase. Judging that sample on
+    // bytes alone discarded it, so `progress_percent` never reached 100 in the
+    // database for any job. A rising percent is forward progress by any reading.
+    const writes: UpdateJobProgressInput[] = [];
+    const writer = createWriter((input) => {
+      writes.push(input);
+      return Promise.resolve();
+    });
+
+    writer.submit({ downloadedBytes: 9_000, totalBytes: 10_000, percent: 90 });
+    await writer.flush();
+    writer.submit({ downloadedBytes: 0, totalBytes: undefined, percent: 100 });
+    await writer.flush();
+
+    expect(writes).toHaveLength(2);
+    expect(writes[1]?.progressPercent).toBe(100);
+  });
+
+  it('still refuses a reset that carries no forward percent', async () => {
+    // The guard must keep its original job: a mid-stream fragment restart with
+    // the percent going DOWN is the case it exists to hide.
+    const writes: UpdateJobProgressInput[] = [];
+    const writer = createWriter((input) => {
+      writes.push(input);
+      return Promise.resolve();
+    });
+
+    writer.submit({ downloadedBytes: 9_000, totalBytes: 10_000, percent: 90 });
+    await writer.flush();
+    writer.submit({ downloadedBytes: 1_000, totalBytes: 10_000, percent: 10 });
+    await writer.flush();
+
+    expect(writes).toHaveLength(1);
+  });
+
   it('accepts a reset when the downloader legitimately changes phase', async () => {
     const writes: UpdateJobProgressInput[] = [];
     const writer = createWriter((input) => {

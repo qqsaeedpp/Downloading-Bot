@@ -1,3 +1,4 @@
+import { MediaKind } from '@tgtools/shared';
 import { describe, expect, it } from 'vitest';
 import type { EngineMediaFormat } from '../engine-types.js';
 import {
@@ -248,6 +249,7 @@ describe('YtDlpFormatSelector.listAudioOptions', () => {
     const options = selector.listAudioOptions(
       [format({ id: 'a', audioBitrateKbps: 64, isAudioOnly: true, isProgressive: false })],
       120,
+      MediaKind.Audio,
     );
 
     // Re-encoding 64 kbps to 320 produces a file five times the size that
@@ -259,12 +261,14 @@ describe('YtDlpFormatSelector.listAudioOptions', () => {
     const options = selector.listAudioOptions(
       [format({ id: 'a', audioBitrateKbps: 320, isAudioOnly: true, isProgressive: false })],
       120,
+      MediaKind.Audio,
     );
     expect(options.map((option) => option.audioBitrateKbps)).toEqual([320, 192, 128]);
   });
 
   it('stops at 192 when the source bitrate is unknown', () => {
-    const options = selector.listAudioOptions([format({ id: 'a' })], 120);
+    // A pre-muxed video track that declares a codec but no bitrate.
+    const options = selector.listAudioOptions([format({ id: 'a' })], 120, MediaKind.Video);
     expect(options.map((option) => option.audioBitrateKbps)).toEqual([192, 128]);
   });
 
@@ -272,6 +276,7 @@ describe('YtDlpFormatSelector.listAudioOptions', () => {
     const options = selector.listAudioOptions(
       [format({ id: 'a', audioBitrateKbps: 192, isAudioOnly: true, isProgressive: false })],
       60,
+      MediaKind.Audio,
     );
     // 192 kbps for 60 s = 1,440,000 bytes.
     expect(options[0]?.estimatedBytes).toBe(1_440_000);

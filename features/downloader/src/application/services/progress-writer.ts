@@ -98,11 +98,21 @@ export class ProgressWriter {
    * its byte counter mid-stream, and a bar that jumps from 90% back to 10%
    * reads as a failure to the person watching it. {@link beginPhase} is how a
    * legitimate reset is declared.
+   *
+   * The percent is consulted before the byte counter because the two can
+   * disagree honestly. The sample that completes a download carries percent 100
+   * with the counter already zeroed for the next phase; judged on bytes alone it
+   * looked like a rewind and was dropped, so no job ever recorded 100.
    */
   #isWorthWriting(candidate: UpdateJobProgressInput): boolean {
     const previous = this.#lastWritten;
     if (previous === undefined) return true;
-    if (candidate.downloadedBytes < previous.downloadedBytes) return false;
+
+    const advances =
+      candidate.progressPercent !== undefined &&
+      previous.progressPercent !== undefined &&
+      candidate.progressPercent > previous.progressPercent;
+    if (!advances && candidate.downloadedBytes < previous.downloadedBytes) return false;
     return (
       candidate.downloadedBytes !== previous.downloadedBytes ||
       candidate.progressPercent !== previous.progressPercent ||

@@ -261,3 +261,66 @@ export const YOUTUBE_VIDEO = {
     },
   ],
 };
+
+/**
+ * A TikTok photo post ("slideshow").
+ *
+ * The trap: it carries a `duration`, because a slideshow is set to a music
+ * track. It is still a set of stills — `formats` is empty and the pictures
+ * arrive as thumbnails. Any rule that reads "has a duration, therefore video"
+ * turns this into an empty quality keyboard.
+ */
+export const TIKTOK_PHOTO_POST = {
+  id: '7300000000000000001',
+  title: 'A photo slideshow with a song',
+  uploader: 'someone',
+  duration: 15,
+  extractor: 'tiktok',
+  webpage_url: 'https://www.tiktok.com/@someone/photo/7300000000000000001',
+  thumbnail: 'https://p16.tiktokcdn.test/slide-1.jpeg',
+  formats: [],
+  thumbnails: [
+    { url: 'https://p16.tiktokcdn.test/slide-1.jpeg', width: 1080, height: 1920 },
+    { url: 'https://p16.tiktokcdn.test/slide-2.jpeg', width: 1080, height: 1920 },
+  ],
+};
+
+/**
+ * An Instagram carousel whose first entry is a photo, with the reel's audio
+ * duration still reported. Same shape of trap as the TikTok slideshow.
+ */
+export const INSTAGRAM_PHOTO_POST = {
+  id: 'ABC123',
+  title: 'A photo post',
+  uploader: 'someone',
+  duration: 27,
+  extractor: 'instagram',
+  webpage_url: 'https://www.instagram.com/p/ABC123/',
+  thumbnail: 'https://scontent.cdninstagram.test/photo.jpg',
+  formats: [],
+  thumbnails: [{ url: 'https://scontent.cdninstagram.test/photo.jpg', width: 1080, height: 1350 }],
+};
+
+/**
+ * A normal TikTok video: one pre-muxed rendition, no height reported. Present
+ * so the fix for the slideshow can be shown not to cost the ordinary case.
+ */
+export const TIKTOK_VIDEO_POST = {
+  id: '7300000000000000002',
+  title: 'An ordinary TikTok video',
+  uploader: 'someone',
+  duration: 31,
+  extractor: 'tiktok',
+  webpage_url: 'https://www.tiktok.com/@someone/video/7300000000000000002',
+  thumbnail: 'https://p16.tiktokcdn.test/cover.jpeg',
+  formats: [
+    {
+      format_id: 'download_addr-0',
+      ext: 'mp4',
+      vcodec: 'h264',
+      acodec: 'aac',
+      filesize: 3_200_000,
+      protocol: 'https',
+    },
+  ],
+};

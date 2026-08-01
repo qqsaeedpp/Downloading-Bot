@@ -1,3 +1,4 @@
+import type { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createNoopLogger } from '../logging/logger.port.js';
 import type { ShutdownStep } from './graceful-shutdown.js';
@@ -10,15 +11,37 @@ import { installGracefulShutdown } from './graceful-shutdown.js';
  * behaviour instead of ours — and the listeners are removed afterwards so they
  * do not accumulate across files.
  */
-const SIGNALS = ['SIGTERM', 'SIGINT', 'unhandledRejection', 'uncaughtException'] as const;
-const before = new Map(SIGNALS.map((signal) => [signal, process.listeners(signal).length]));
+/**
+ * Everything `installGracefulShutdown` subscribes to. Two are signals; the
+ * other two are not — `NodeJS.Signals` cannot describe this set, and typing it
+ * as such is what hid the mismatch.
+ */
+type ShutdownEvent = NodeJS.Signals | 'unhandledRejection' | 'uncaughtException';
+
+const SHUTDOWN_EVENTS: readonly ShutdownEvent[] = [
+  'SIGTERM',
+  'SIGINT',
+  'unhandledRejection',
+  'uncaughtException',
+];
+
+/**
+ * `process`'s own overloads name each event individually, so none of them
+ * accepts a variable holding the union. The `EventEmitter` interface underneath
+ * takes any event name and is the honest way to say "whatever we registered".
+ */
+const events: EventEmitter = process;
+
+const before = new Map<ShutdownEvent, number>(
+  SHUTDOWN_EVENTS.map((event) => [event, events.listeners(event).length]),
+);
 
 afterEach(() => {
-  for (const signal of SIGNALS) {
-    const keep = before.get(signal) ?? 0;
-    const listeners = process.listeners(signal);
+  for (const event of SHUTDOWN_EVENTS) {
+    const keep = before.get(event) ?? 0;
+    const listeners = events.listeners(event);
     for (const listener of listeners.slice(keep)) {
-      process.removeListener(signal, listener as () => void);
+      events.removeListener(event, listener as () => void);
     }
   }
 });

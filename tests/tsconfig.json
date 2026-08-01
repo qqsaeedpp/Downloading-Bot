@@ -23,5 +23,10 @@
       "@tgtools/feature-help": ["features/help/src/index.ts"]
     }
   },
-  "include": ["**/*.ts"]
+  // Each package excludes `src/**/*.test.ts` from its own build so tests never
+  // reach `dist`. That left the colocated suites type-checked by nothing at all
+  // — a test calling a function with a missing required argument still compiled
+  // and still passed, which is how a changed signature reached production
+  // looking verified. They are checked here instead, where nothing is emitted.
+  "include": ["**/*.ts", "../packages/*/src/**/*.test.ts", "../features/*/src/**/*.test.ts"]
 }
