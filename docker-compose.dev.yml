@@ -1,0 +1,51 @@
+# =============================================================================
+#  Development overlay: datastores only.
+#
+#    docker compose -f docker-compose.dev.yml up -d
+#    npm run db:migrate
+#    npm run dev:bot        # in one terminal
+#    npm run dev:worker     # in another
+#
+#  The bot and worker run on the host so a save reloads them in a second
+#  instead of rebuilding an image. Ports are published to localhost only —
+#  binding 5432 to every interface on a laptop is how a database ends up on a
+#  café network.
+# =============================================================================
+name: telegram-tools-bot-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-telegram_tools}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-dev-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-dev-data:
+  redis-dev-data:

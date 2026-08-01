@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Enough to satisfy the config schema; none of it reaches a real service.
+  TELEGRAM_BOT_TOKEN: "1234567890:CI-placeholder-token-not-a-real-secret"
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/telegram_tools_test
+  REDIS_URL: redis://localhost:6379
+
+jobs:
+  verify:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Typecheck
+        run: npm run check-types
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: End-to-end tests
+        # In-memory adapters only; no datastore required.
+        run: npm run test:e2e
+
+      - name: Integration tests
+        run: npm run test:integration
+
+      - name: Build
+        run: npm run build
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # High and critical only. Failing on every low-severity advisory in a
+      # transitive dev dependency trains people to ignore the job.
+      - run: npm audit --audit-level=high --omit=dev
+
+  migrations:
+    name: Migration check
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: telegram_tools_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      - name: Apply migrations
+        run: npm run db:migrate
+
+      - name: Applying twice must be a no-op
+        run: npm run db:migrate
+
+      - name: Schema must match the Drizzle definitions
+        # `generate` writes a new migration when the schema has drifted, so a
+        # dirty tree here means someone changed a table without a migration.
+        run: |
+          npm run db:generate
+          if [ -n "$(git status --porcelain infra/migrations)" ]; then
+            echo "::error::Schema drift: the Drizzle schema does not match infra/migrations."
+            git status --porcelain infra/migrations
+            git diff -- infra/migrations
+            exit 1
+          fi
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Validate the compose file
+        run: docker compose config --quiet
+        env:
+          TELEGRAM_BOT_TOKEN: placeholder
+          POSTGRES_PASSWORD: placeholder
+
+      - name: Build the bot image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.bot
+          push: false
+          cache-from: type=gha,scope=bot
+          cache-to: type=gha,mode=max,scope=bot
+
+      - name: Build the worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.worker
+          push: false
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,mode=max,scope=worker

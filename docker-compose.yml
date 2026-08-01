@@ -1,0 +1,189 @@
+name: telegram-tools-bot
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# Everything both services need. Anything listed here without a default is
+# required in `.env`; the Zod schema fails the process at startup if it is wrong.
+x-app-env: &app-env
+  NODE_ENV: ${NODE_ENV:-production}
+  APP_VERSION: ${APP_VERSION:-1.0.0}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  LOG_PRETTY: ${LOG_PRETTY:-false}
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+  TELEGRAM_API_ROOT: ${TELEGRAM_API_ROOT:-}
+  TELEGRAM_USE_LOCAL_API: ${TELEGRAM_USE_LOCAL_API:-false}
+  # Composed from POSTGRES_* and the service names — any DATABASE_URL in .env is
+  # deliberately ignored here, because inside this network the host is always
+  # `postgres` and a stale localhost URL from a developer's .env would fail in a
+  # confusing way.
+  DATABASE_URL: postgresql://${POSTGRES_USER:-tgtools}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-telegram_tools}
+  DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+  REDIS_URL: redis://redis:6379
+  QUEUE_REMOVE_COMPLETE_AFTER_SECONDS: ${QUEUE_REMOVE_COMPLETE_AFTER_SECONDS:-3600}
+  QUEUE_REMOVE_FAIL_AFTER_SECONDS: ${QUEUE_REMOVE_FAIL_AFTER_SECONDS:-604800}
+  DOWNLOAD_DIR: /data/downloads
+  MAX_DOWNLOAD_MB: ${MAX_DOWNLOAD_MB:-500}
+  MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+  MAX_TRANSCODE_MB: ${MAX_TRANSCODE_MB:-250}
+  MIN_FREE_DISK_MB: ${MIN_FREE_DISK_MB:-2048}
+  MEDIA_INSPECT_TIMEOUT_MS: ${MEDIA_INSPECT_TIMEOUT_MS:-30000}
+  DOWNLOAD_TIMEOUT_MS: ${DOWNLOAD_TIMEOUT_MS:-900000}
+  FFMPEG_TIMEOUT_MS: ${FFMPEG_TIMEOUT_MS:-900000}
+  FFPROBE_TIMEOUT_MS: ${FFPROBE_TIMEOUT_MS:-30000}
+  TELEGRAM_UPLOAD_TIMEOUT_MS: ${TELEGRAM_UPLOAD_TIMEOUT_MS:-900000}
+  JOB_TIMEOUT_MS: ${JOB_TIMEOUT_MS:-3600000}
+  DOWNLOAD_WORKER_CONCURRENCY: ${DOWNLOAD_WORKER_CONCURRENCY:-2}
+  DOWNLOAD_JOB_ATTEMPTS: ${DOWNLOAD_JOB_ATTEMPTS:-2}
+  DOWNLOAD_JOB_BACKOFF_MS: ${DOWNLOAD_JOB_BACKOFF_MS:-5000}
+  DOWNLOAD_JOB_LOCK_DURATION_MS: ${DOWNLOAD_JOB_LOCK_DURATION_MS:-60000}
+  WORKER_SHUTDOWN_GRACE_MS: ${WORKER_SHUTDOWN_GRACE_MS:-30000}
+  PROGRESS_UPDATE_INTERVAL_MS: ${PROGRESS_UPDATE_INTERVAL_MS:-3000}
+  PROGRESS_UPDATE_MIN_PERCENT: ${PROGRESS_UPDATE_MIN_PERCENT:-5}
+  MEDIA_INFO_CACHE_TTL_SECONDS: ${MEDIA_INFO_CACHE_TTL_SECONDS:-600}
+  DOWNLOAD_SELECTION_TTL_SECONDS: ${DOWNLOAD_SELECTION_TTL_SECONDS:-1800}
+  ORPHAN_WORKSPACE_MAX_AGE_HOURS: ${ORPHAN_WORKSPACE_MAX_AGE_HOURS:-6}
+  MAINTENANCE_INTERVAL_MS: ${MAINTENANCE_INTERVAL_MS:-900000}
+  MAX_ACTIVE_JOBS_PER_USER: ${MAX_ACTIVE_JOBS_PER_USER:-2}
+  RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-60000}
+  RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-20}
+  INSPECT_RATE_LIMIT_MAX: ${INSPECT_RATE_LIMIT_MAX:-10}
+  FFMPEG_VIDEO_CODEC: ${FFMPEG_VIDEO_CODEC:-libx264}
+  FFMPEG_AUDIO_CODEC: ${FFMPEG_AUDIO_CODEC:-aac}
+  FFMPEG_PRESET: ${FFMPEG_PRESET:-veryfast}
+  FFMPEG_CRF: ${FFMPEG_CRF:-23}
+  STORE_FULL_SOURCE_URL: ${STORE_FULL_SOURCE_URL:-false}
+  # Read-only mounts under /run/secrets. Leave the host paths unset to run
+  # fully unauthenticated — see docs/security.md before supplying any of these.
+  INSTAGRAM_COOKIES_PATH: ${INSTAGRAM_COOKIES_PATH:-}
+  TIKTOK_COOKIES_PATH: ${TIKTOK_COOKIES_PATH:-}
+  X_COOKIES_PATH: ${X_COOKIES_PATH:-}
+  PINTEREST_COOKIES_PATH: ${PINTEREST_COOKIES_PATH:-}
+  TZ: ${TZ:-UTC}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tgtools}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-telegram_tools}
+      # Deterministic ordering and UTF-8 regardless of the host locale.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tgtools} -d ${POSTGRES_DB:-telegram_tools}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [internal]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    logging: *logging
+    # `appendonly` because the queue is the only record that a user's job was
+    # accepted; losing it on restart loses their request.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
+
+  # One-shot. Migrations must not run from the services themselves: two
+  # replicas booting at once would race on the same DDL, and a failed migration
+  # should stop a deploy rather than crash-loop a bot.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+      args:
+        YTDLP_VERSION: ${YTDLP_VERSION:-2026.07.04}
+    restart: "no"
+    logging: *logging
+    environment: *app-env
+    command: ["node", "apps/worker/dist/migrate.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+      args:
+        YTDLP_VERSION: ${YTDLP_VERSION:-2026.07.04}
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      <<: *app-env
+      BOT_HEALTH_PORT: 3001
+    # Bound to loopback: the health endpoint is for the host's monitoring, not
+    # for the internet.
+    ports:
+      - "127.0.0.1:${BOT_HEALTH_PORT:-3001}:3001"
+    # No download volume: this process is not supposed to be able to write media.
+    volumes:
+      - ./secrets:/run/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # Long enough for the bot to stop polling and close its connections.
+    stop_grace_period: 30s
+    networks: [internal]
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+      args:
+        YTDLP_VERSION: ${YTDLP_VERSION:-2026.07.04}
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      <<: *app-env
+      WORKER_HEALTH_PORT: 3002
+    ports:
+      - "127.0.0.1:${WORKER_HEALTH_PORT:-3002}:3002"
+    volumes:
+      - downloads:/data/downloads
+      - ./secrets:/run/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # Must exceed WORKER_SHUTDOWN_GRACE_MS, or Docker SIGKILLs the worker while
+    # it is still giving an in-flight download its chance to finish.
+    stop_grace_period: 90s
+    networks: [internal]
+
+volumes:
+  postgres-data:
+  redis-data:
+  # Scratch space. Every job creates and deletes its own directory here; nothing
+  # in it is expected to survive a restart.
+  downloads:
+
+networks:
+  internal:
+    driver: bridge

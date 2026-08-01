@@ -1,0 +1,27 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "composite": false,
+    "types": ["node", "vitest/globals"],
+    "baseUrl": "..",
+    // The suite runs straight from source, so the same aliases vitest.config.ts
+    // installs at runtime have to exist at type-check time.
+    "paths": {
+      "@tgtools/shared": ["packages/shared/src/index.ts"],
+      "@tgtools/config": ["packages/config/src/index.ts"],
+      "@tgtools/logger": ["packages/logger/src/index.ts"],
+      "@tgtools/database": ["packages/database/src/index.ts"],
+      "@tgtools/queue": ["packages/queue/src/index.ts"],
+      "@tgtools/telegram": ["packages/telegram/src/index.ts"],
+      "@tgtools/downloader-engine": ["packages/downloader-engine/src/index.ts"],
+      "@tgtools/feature-downloader": ["features/downloader/src/index.ts"],
+      "@tgtools/feature-users": ["features/users/src/index.ts"],
+      "@tgtools/feature-start": ["features/start/src/index.ts"],
+      "@tgtools/feature-help": ["features/help/src/index.ts"]
+    }
+  },
+  "include": ["**/*.ts"]
+}

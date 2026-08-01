@@ -1,0 +1,103 @@
+# syntax=docker/dockerfile:1.7
+# =============================================================================
+#  Worker image — yt-dlp, FFmpeg, and everything expensive.
+# =============================================================================
+
+# yt-dlp changes weekly and an unpinned image means a rebuild can silently
+# change extractor behaviour on a Friday afternoon. Pin it, and override at
+# build time when you have deliberately tested a newer one:
+#   docker compose build --build-arg YTDLP_VERSION=2026.08.01 worker
+ARG YTDLP_VERSION=2026.07.04
+ARG NODE_VERSION=22
+
+# ── Stage 1: install dependencies ────────────────────────────────────────────
+FROM node:${NODE_VERSION}-bookworm-slim AS deps
+WORKDIR /app
+
+# Manifests only, so this layer survives every source change.
+COPY package.json package-lock.json turbo.json ./
+COPY apps/bot/package.json apps/bot/
+COPY apps/worker/package.json apps/worker/
+COPY packages/config/package.json packages/config/
+COPY packages/database/package.json packages/database/
+COPY packages/downloader-engine/package.json packages/downloader-engine/
+COPY packages/logger/package.json packages/logger/
+COPY packages/queue/package.json packages/queue/
+COPY packages/shared/package.json packages/shared/
+COPY packages/telegram/package.json packages/telegram/
+COPY features/downloader/package.json features/downloader/
+COPY features/help/package.json features/help/
+COPY features/start/package.json features/start/
+COPY features/users/package.json features/users/
+
+# `--ignore-scripts` stops any dependency's postinstall from reaching the
+# network to fetch its own binary — ours are installed deliberately, below.
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --ignore-scripts
+
+# ── Stage 2: compile ─────────────────────────────────────────────────────────
+FROM deps AS build
+WORKDIR /app
+COPY tsconfig.base.json ./
+COPY packages/ packages/
+COPY features/ features/
+COPY apps/ apps/
+RUN npx turbo run build --filter=@tgtools/worker
+
+# Drop dev dependencies from the tree that ships.
+RUN --mount=type=cache,target=/root/.npm \
+    npm prune --omit=dev
+
+# ── Stage 3: runtime ─────────────────────────────────────────────────────────
+FROM node:${NODE_VERSION}-bookworm-slim AS runtime
+ARG YTDLP_VERSION
+
+ENV NODE_ENV=production \
+    YTDLP_PATH=/usr/local/bin/yt-dlp \
+    FFMPEG_PATH=/usr/bin/ffmpeg \
+    FFPROBE_PATH=/usr/bin/ffprobe \
+    DOWNLOAD_DIR=/data/downloads
+
+# `tini` as PID 1 so SIGTERM reaches Node and the graceful shutdown actually
+# runs — without an init, a killed yt-dlp child becomes a zombie and the
+# container accumulates them until it runs out of process slots.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        ffmpeg \
+        python3 \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
+
+# The single-file build, pinned by tag. Verified by running it once at build
+# time: a truncated download would otherwise only be discovered by the first
+# user whose link needed it.
+RUN curl -fsSL --retry 3 \
+        "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp_linux" \
+        -o /usr/local/bin/yt-dlp \
+    && chmod 0755 /usr/local/bin/yt-dlp \
+    && /usr/local/bin/yt-dlp --version
+
+WORKDIR /app
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/package.json ./package.json
+COPY --from=build /app/packages ./packages
+COPY --from=build /app/features ./features
+COPY --from=build /app/apps/worker ./apps/worker
+COPY --from=build /app/apps/bot/package.json ./apps/bot/package.json
+COPY infra/migrations ./infra/migrations
+
+# Non-root. The download volume is the only thing this process may write to.
+RUN groupadd --system --gid 1001 tgtools \
+    && useradd --system --uid 1001 --gid tgtools --no-create-home tgtools \
+    && mkdir -p /data/downloads \
+    && chown -R tgtools:tgtools /data
+USER tgtools
+
+EXPOSE 3002
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:'+(process.env.WORKER_HEALTH_PORT||3002)+'/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "apps/worker/dist/bootstrap.js"]

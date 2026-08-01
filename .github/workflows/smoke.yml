@@ -1,0 +1,60 @@
+name: Extractor smoke test
+
+# Manual only. This is the one suite that touches the public internet, and it
+# fails for reasons unrelated to any change under review — a site redesign, a
+# rate limit, a link that has since been deleted. Running it per-push would
+# train everyone to ignore a red build.
+#
+# Run it deliberately: after bumping YTDLP_VERSION, or when a user reports that
+# one platform has stopped working.
+on:
+  workflow_dispatch:
+    inputs:
+      ytdlp_version:
+        description: "yt-dlp version to test (defaults to the pinned one)"
+        required: false
+        type: string
+
+jobs:
+  smoke:
+    name: Verify the supported extractors
+    runs-on: ubuntu-latest
+    # Needs SMOKE_* URL secrets; without them every case skips itself.
+    environment: smoke
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Install the pinned yt-dlp
+        run: |
+          VERSION="${{ inputs.ytdlp_version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="$(grep -m1 'ARG YTDLP_VERSION=' Dockerfile.worker | cut -d= -f2)"
+          fi
+          echo "Using yt-dlp $VERSION"
+          sudo curl -fsSL --retry 3 \
+            "https://github.com/yt-dlp/yt-dlp/releases/download/${VERSION}/yt-dlp_linux" \
+            -o /usr/local/bin/yt-dlp
+          sudo chmod 0755 /usr/local/bin/yt-dlp
+          yt-dlp --version
+
+      - name: Run the smoke suite
+        run: npm run test:smoke
+        env:
+          RUN_SMOKE_TESTS: "1"
+          TELEGRAM_BOT_TOKEN: "1234567890:placeholder"
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/unused
+          REDIS_URL: redis://localhost:6379
+          YTDLP_PATH: /usr/local/bin/yt-dlp
+          # Public post URLs. Kept as secrets so the job's logs and this file do
+          # not become a list of links to hammer.
+          SMOKE_INSTAGRAM_URL: ${{ secrets.SMOKE_INSTAGRAM_URL }}
+          SMOKE_TIKTOK_URL: ${{ secrets.SMOKE_TIKTOK_URL }}
+          SMOKE_PINTEREST_URL: ${{ secrets.SMOKE_PINTEREST_URL }}
+          SMOKE_X_URL: ${{ secrets.SMOKE_X_URL }}

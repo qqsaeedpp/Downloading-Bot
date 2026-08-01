@@ -1,0 +1,52 @@
+{
+  "name": "telegram-tools-bot",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "npm@11.13.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "features/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "check-types": "turbo run check-types && tsc -p tests/tsconfig.json",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run --project unit",
+    "test:watch": "vitest --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "vitest run --project e2e",
+    "test:all": "vitest run",
+    "test:smoke": "vitest run --project smoke",
+    "test:coverage": "vitest run --project unit --coverage",
+    "db:generate": "drizzle-kit generate --config=packages/database/drizzle.config.ts",
+    "db:migrate": "node --env-file-if-exists=.env --import tsx apps/worker/src/migrate.ts",
+    "db:check": "drizzle-kit check --config=packages/database/drizzle.config.ts",
+    "dev:bot": "npm run dev --workspace @tgtools/bot",
+    "dev:worker": "npm run dev --workspace @tgtools/worker",
+    "clean": "turbo run clean && rimraf node_modules"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^22.20.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "eslint": "^9.39.5",
+    "eslint-import-resolver-typescript": "^4.4.5",
+    "eslint-plugin-import-x": "^4.17.1",
+    "globals": "^17.8.0",
+    "prettier": "^3.9.6",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.23.1",
+    "turbo": "^2.10.8",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.10"
+  }
+}

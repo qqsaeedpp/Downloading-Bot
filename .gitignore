@@ -1,0 +1,25 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.turbo/
+
+# Environment / secrets — never commit these.
+.env
+.env.*
+!.env.example
+secrets/*
+!secrets/.gitkeep
+*cookies*.txt
+
+# Runtime data
+downloads/
+data/
+logs/
+*.log
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

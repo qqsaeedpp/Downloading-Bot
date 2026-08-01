@@ -1,0 +1,85 @@
+# syntax=docker/dockerfile:1.7
+# =============================================================================
+#  Bot image — receives updates, answers questions, queues work.
+#
+#  Deliberately WITHOUT yt-dlp's binary payload beyond what metadata extraction
+#  needs, and without any writable media volume: this process must never
+#  download. Keeping the images separate is what makes that a property of the
+#  deployment rather than a rule someone has to remember.
+# =============================================================================
+ARG YTDLP_VERSION=2026.07.04
+ARG NODE_VERSION=22
+
+# ── Stage 1: install dependencies ────────────────────────────────────────────
+FROM node:${NODE_VERSION}-bookworm-slim AS deps
+WORKDIR /app
+
+COPY package.json package-lock.json turbo.json ./
+COPY apps/bot/package.json apps/bot/
+COPY apps/worker/package.json apps/worker/
+COPY packages/config/package.json packages/config/
+COPY packages/database/package.json packages/database/
+COPY packages/downloader-engine/package.json packages/downloader-engine/
+COPY packages/logger/package.json packages/logger/
+COPY packages/queue/package.json packages/queue/
+COPY packages/shared/package.json packages/shared/
+COPY packages/telegram/package.json packages/telegram/
+COPY features/downloader/package.json features/downloader/
+COPY features/help/package.json features/help/
+COPY features/start/package.json features/start/
+COPY features/users/package.json features/users/
+
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --ignore-scripts
+
+# ── Stage 2: compile ─────────────────────────────────────────────────────────
+FROM deps AS build
+WORKDIR /app
+COPY tsconfig.base.json ./
+COPY packages/ packages/
+COPY features/ features/
+COPY apps/ apps/
+RUN npx turbo run build --filter=@tgtools/bot
+RUN --mount=type=cache,target=/root/.npm \
+    npm prune --omit=dev
+
+# ── Stage 3: runtime ─────────────────────────────────────────────────────────
+FROM node:${NODE_VERSION}-bookworm-slim AS runtime
+ARG YTDLP_VERSION
+
+ENV NODE_ENV=production \
+    YTDLP_PATH=/usr/local/bin/yt-dlp \
+    FFMPEG_PATH=/usr/bin/ffmpeg \
+    FFPROBE_PATH=/usr/bin/ffprobe
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl python3 tini \
+    && rm -rf /var/lib/apt/lists/*
+
+# The bot runs yt-dlp for METADATA only — a quality menu has to reflect the
+# formats a post really offers, and that takes a few seconds, not a few minutes.
+RUN curl -fsSL --retry 3 \
+        "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp_linux" \
+        -o /usr/local/bin/yt-dlp \
+    && chmod 0755 /usr/local/bin/yt-dlp \
+    && /usr/local/bin/yt-dlp --version
+
+WORKDIR /app
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/package.json ./package.json
+COPY --from=build /app/packages ./packages
+COPY --from=build /app/features ./features
+COPY --from=build /app/apps/bot ./apps/bot
+COPY --from=build /app/apps/worker/package.json ./apps/worker/package.json
+COPY infra/migrations ./infra/migrations
+
+RUN groupadd --system --gid 1001 tgtools \
+    && useradd --system --uid 1001 --gid tgtools --no-create-home tgtools
+USER tgtools
+
+EXPOSE 3001
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:'+(process.env.BOT_HEALTH_PORT||3001)+'/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "apps/bot/dist/bootstrap.js"]
