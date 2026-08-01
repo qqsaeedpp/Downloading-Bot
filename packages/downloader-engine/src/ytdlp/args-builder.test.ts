@@ -45,6 +45,27 @@ describe('buildBaseArgs', () => {
     const args = buildBaseArgs({ ...base, platformExtraArgs: ['--extractor-args', 'x:y'] });
     expect(args.slice(-2)).toEqual(['--extractor-args', 'x:y']);
   });
+
+  it('routes through a proxy when one is configured', () => {
+    // A residential exit is the account-free answer to a datacentre IP being
+    // treated as suspicious.
+    expect(
+      flagValue(buildBaseArgs({ ...base, proxyUrl: 'socks5://10.0.0.9:1080' }), '--proxy'),
+    ).toBe('socks5://10.0.0.9:1080');
+    expect(buildBaseArgs(base)).not.toContain('--proxy');
+  });
+
+  it('passes operator-supplied extractor arguments', () => {
+    // The escape hatch: a platform's newest anti-automation measure can be
+    // answered with an environment variable instead of a release.
+    expect(
+      flagValue(
+        buildBaseArgs({ ...base, extractorArgs: 'youtube:player_client=android_vr' }),
+        '--extractor-args',
+      ),
+    ).toBe('youtube:player_client=android_vr');
+    expect(buildBaseArgs(base)).not.toContain('--extractor-args');
+  });
 });
 
 describe('buildInspectArgs', () => {

@@ -60,6 +60,7 @@ export const pinterestPlatform: PlatformDefinition = {
   createPolicy(): PlatformDownloadPolicy {
     return {
       platform: MediaPlatform.Pinterest,
+      ytdlpExtractorKey: 'pinterest',
       preferProgressive: false,
       // The overwhelming majority of pins are stills, and a pin that does carry
       // video still has an image worth offering.

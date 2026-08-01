@@ -88,6 +88,7 @@ export const youtubePlatform: PlatformDefinition = {
   createPolicy(): PlatformDownloadPolicy {
     return {
       platform: MediaPlatform.YouTube,
+      ytdlpExtractorKey: 'youtube',
       // YouTube labels its formats accurately, so the height filters land where
       // they should; there is no unlabelled pre-muxed file to shortcut to.
       preferProgressive: false,

@@ -46,6 +46,11 @@ export interface CreateEngineOptions {
   readonly ffmpeg: EngineFfmpegSettings;
   readonly downloadDirectory: string;
   readonly cookiePaths: Readonly<Partial<Record<MediaPlatform, string>>>;
+  /** Operator escape hatches; see `ExtractionConfig`. */
+  readonly extraction?: {
+    readonly proxyUrl?: string | undefined;
+    readonly extractorArgs?: Readonly<Partial<Record<MediaPlatform, string>>> | undefined;
+  };
   readonly idGenerator: IdGenerator;
   readonly logger: Logger;
   /** Overridden in tests with a scripted runner; production spawns yt-dlp. */
@@ -142,6 +147,10 @@ export function createDownloaderEngine(options: CreateEngineOptions): EngineBund
       maxDownloadBytes: limits.maxDownloadBytes,
       inspectTimeoutMs: limits.inspectTimeoutMs,
       downloadTimeoutMs: limits.downloadTimeoutMs,
+    },
+    extraction: {
+      proxyUrl: options.extraction?.proxyUrl,
+      extractorArgs: options.extraction?.extractorArgs ?? {},
     },
   });
 

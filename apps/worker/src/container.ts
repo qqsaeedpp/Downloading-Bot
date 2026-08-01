@@ -78,6 +78,7 @@ export function createWorkerContainer(config: AppConfig): WorkerContainer {
     ffmpeg: config.ffmpeg,
     downloadDirectory: config.storage.downloadDir,
     cookiePaths: config.cookies,
+    extraction: config.extraction,
     idGenerator: ids,
     logger,
   });

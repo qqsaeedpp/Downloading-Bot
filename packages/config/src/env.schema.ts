@@ -121,6 +121,16 @@ export const envSchema = z.object({
   PINTEREST_COOKIES_PATH: optionalText(),
   YOUTUBE_COOKIES_PATH: optionalText(),
 
+  // ── Extraction tuning ──────────────────────────────────────────────────
+  // Escape hatches, so the answer to an extractor change is an environment
+  // variable and a restart rather than a release.
+  YTDLP_PROXY: optionalText(),
+  INSTAGRAM_EXTRACTOR_ARGS: optionalText(),
+  TIKTOK_EXTRACTOR_ARGS: optionalText(),
+  X_EXTRACTOR_ARGS: optionalText(),
+  PINTEREST_EXTRACTOR_ARGS: optionalText(),
+  YOUTUBE_EXTRACTOR_ARGS: optionalText(),
+
   BOT_HEALTH_PORT: positiveInt(3_001, { min: 1, max: 65_535 }),
   WORKER_HEALTH_PORT: positiveInt(3_002, { min: 1, max: 65_535 }),
 

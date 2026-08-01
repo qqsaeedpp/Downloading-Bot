@@ -105,6 +105,11 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
 
     cookies: buildCookieConfig(env),
 
+    extraction: {
+      proxyUrl: env.YTDLP_PROXY,
+      extractorArgs: buildExtractorArgs(env),
+    },
+
     health: {
       botPort: env.BOT_HEALTH_PORT,
       workerPort: env.WORKER_HEALTH_PORT,
@@ -133,6 +138,21 @@ function buildCookieConfig(env: RawEnv): CookieConfig {
     if (path !== undefined) cookies[platform] = path;
   }
   return cookies;
+}
+
+function buildExtractorArgs(env: RawEnv): Partial<Record<MediaPlatform, string>> {
+  const entries: [MediaPlatform, string | undefined][] = [
+    [MediaPlatform.Instagram, env.INSTAGRAM_EXTRACTOR_ARGS],
+    [MediaPlatform.TikTok, env.TIKTOK_EXTRACTOR_ARGS],
+    [MediaPlatform.X, env.X_EXTRACTOR_ARGS],
+    [MediaPlatform.Pinterest, env.PINTEREST_EXTRACTOR_ARGS],
+    [MediaPlatform.YouTube, env.YOUTUBE_EXTRACTOR_ARGS],
+  ];
+  const args: Partial<Record<MediaPlatform, string>> = {};
+  for (const [platform, value] of entries) {
+    if (value !== undefined) args[platform] = value;
+  }
+  return args;
 }
 
 /**

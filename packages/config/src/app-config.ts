@@ -103,6 +103,21 @@ export interface MaintenanceConfig {
 /** Paths to Netscape `cookies.txt` files, keyed by platform. */
 export type CookieConfig = Readonly<Partial<Record<MediaPlatform, string>>>;
 
+export interface ExtractionConfig {
+  /**
+   * Routes every yt-dlp request through a proxy. The usual reason is that
+   * YouTube treats datacentre address space as suspicious, and a residential
+   * exit resolves that without any account being involved.
+   */
+  readonly proxyUrl: string | undefined;
+  /**
+   * Per-platform `--extractor-args` values, WITHOUT the extractor prefix — the
+   * policy supplies that. Exists so the workaround for a platform's newest
+   * anti-automation measure is a configuration change, not a release.
+   */
+  readonly extractorArgs: Readonly<Partial<Record<MediaPlatform, string>>>;
+}
+
 /**
  * The whole of this process's configuration, resolved once at startup and then
  * passed explicitly. Deliberately not a module-level singleton: a test that
@@ -125,6 +140,7 @@ export interface AppConfig {
   readonly cache: CacheConfig;
   readonly ffmpeg: FfmpegConfig;
   readonly cookies: CookieConfig;
+  readonly extraction: ExtractionConfig;
   readonly health: HealthConfig;
   readonly privacy: PrivacyConfig;
   readonly maintenance: MaintenanceConfig;

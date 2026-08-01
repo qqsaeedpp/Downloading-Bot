@@ -8,6 +8,7 @@ export type {
   CacheConfig,
   CookieConfig,
   DatabaseConfig,
+  ExtractionConfig,
   FfmpegConfig,
   HealthConfig,
   LimitsConfig,

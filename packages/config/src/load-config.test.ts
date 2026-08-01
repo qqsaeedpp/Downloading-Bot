@@ -68,6 +68,7 @@ describe('loadConfig', () => {
       cache: { mediaInfoTtlSeconds: 600, selectionTtlSeconds: 1_800 },
       ffmpeg: { videoCodec: 'libx264', audioCodec: 'aac', preset: 'veryfast', crf: 23 },
       cookies: {},
+      extraction: { proxyUrl: undefined, extractorArgs: {} },
       health: { botPort: 3_001, workerPort: 3_002 },
       privacy: { storeFullSourceUrl: false },
       maintenance: { intervalMs: 900_000 },
@@ -102,6 +103,25 @@ describe('loadConfig', () => {
 
     expect(config.database.poolMax).toBe(25);
     expect(config.health.botPort).toBe(4001);
+  });
+
+  it('exposes the account-free extraction escape hatches', () => {
+    // A cookie file is one answer to a platform's bot check; a proxy or a
+    // different player client are the ones that need no account at all. Both
+    // must be reachable from the environment, because the workaround changes
+    // faster than any release cycle.
+    const config = loadConfig(
+      env({
+        YTDLP_PROXY: 'socks5://10.0.0.9:1080',
+        YOUTUBE_EXTRACTOR_ARGS: 'player_client=android_vr',
+      }),
+    );
+
+    expect(config.extraction.proxyUrl).toBe('socks5://10.0.0.9:1080');
+    expect(config.extraction.extractorArgs.youtube).toBe('player_client=android_vr');
+    // Unset platforms stay absent rather than becoming an empty string, which
+    // would put a meaningless `--extractor-args tiktok:` on the command line.
+    expect(config.extraction.extractorArgs.tiktok).toBeUndefined();
   });
 
   it('boots on the shipped defaults alone', () => {

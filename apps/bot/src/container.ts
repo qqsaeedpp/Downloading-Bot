@@ -74,6 +74,7 @@ export function createBotContainer(config: AppConfig): BotContainer {
     ffmpeg: config.ffmpeg,
     downloadDirectory: config.storage.downloadDir,
     cookiePaths: config.cookies,
+    extraction: config.extraction,
     idGenerator: ids,
     logger,
   });

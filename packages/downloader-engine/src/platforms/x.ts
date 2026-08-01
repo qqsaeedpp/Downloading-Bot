@@ -29,6 +29,7 @@ export const xPlatform: PlatformDefinition = {
   createPolicy(): PlatformDownloadPolicy {
     return {
       platform: MediaPlatform.X,
+      ytdlpExtractorKey: 'twitter',
       preferProgressive: false,
       imageFirst: false,
       servesStandaloneImages: true,

@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { DownloadStage, DownloadType, MediaKind } from '@tgtools/shared';
-import type { DownloadProgress, IdGenerator, Logger } from '@tgtools/shared';
+import type { DownloadProgress, IdGenerator, Logger, MediaPlatform } from '@tgtools/shared';
 import {
   assertContainedPath,
   createAbortScope,
@@ -30,6 +30,7 @@ import type { ImageNormalizer } from '../media/image-normalizer.js';
 import { mimeTypeForPath } from '../media/mime.js';
 import type { PlaybackNormalizer } from '../media/playback-normalizer.js';
 import type { ThumbnailGenerator } from '../media/thumbnail.js';
+import type { PlatformDownloadPolicy } from '../platforms/platform-definition.js';
 import type { PlatformRegistry } from '../platforms/registry.js';
 import type { JobWorkspace, WorkspaceFactory } from '../workspace/job-workspace.js';
 import { startSizeWatchdog } from '../workspace/size-watchdog.js';
@@ -65,6 +66,10 @@ export interface YtDlpMediaEngineOptions {
     readonly inspectTimeoutMs: number;
     readonly downloadTimeoutMs: number;
   };
+  readonly extraction?: {
+    readonly proxyUrl?: string | undefined;
+    readonly extractorArgs?: Readonly<Partial<Record<MediaPlatform, string>>> | undefined;
+  };
 }
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
@@ -84,6 +89,26 @@ export class YtDlpMediaEngine implements MediaEngine {
 
   constructor(private readonly options: YtDlpMediaEngineOptions) {
     this.#mapper = new YtDlpInfoMapper(options.logger);
+  }
+
+  /**
+   * The operator's escape hatches, resolved for one platform.
+   *
+   * `--extractor-args` needs yt-dlp's own name for the extractor, which is not
+   * always our slug: X is `twitter` to yt-dlp. The policy carries that mapping
+   * so the environment variable stays simple — `player_client=android_vr`, not
+   * `youtube:player_client=android_vr`.
+   */
+  #extractionArgs(policy: PlatformDownloadPolicy): {
+    proxyUrl: string | undefined;
+    extractorArgs: string | undefined;
+  } {
+    const configured = this.options.extraction?.extractorArgs?.[policy.platform];
+    return {
+      proxyUrl: this.options.extraction?.proxyUrl,
+      extractorArgs:
+        configured === undefined ? undefined : `${policy.ytdlpExtractorKey}:${configured}`,
+    };
   }
 
   async inspect(request: EngineInspectRequest): Promise<EngineMediaInfo> {
@@ -113,6 +138,7 @@ export class YtDlpMediaEngine implements MediaEngine {
                 cookiePath,
                 platformExtraArgs: policy.extraArgs,
                 ignoreNoFormatsError: policy.servesStandaloneImages,
+                ...this.#extractionArgs(policy),
               }),
               signal: scope.signal,
             });
@@ -274,6 +300,12 @@ export class YtDlpMediaEngine implements MediaEngine {
   ): Promise<string> {
     const outputTemplate = workspace.createOutputTemplate();
     const maxBytes = this.options.limits.maxDownloadBytes;
+    // The same proxy and extractor arguments the inspection used. A download
+    // that disagreed with the probe about how to reach the site would be a
+    // reliable way to produce "the formats it offered me are gone".
+    const extraction = this.#extractionArgs(
+      this.options.registry.get(request.platform).createPolicy(),
+    );
     const onProgress = (progress: DownloadProgress): void => {
       // Defence in depth. The caller is expected to absorb its own failures —
       // `ProgressWriter` does — but a progress callback rejecting here would
@@ -291,7 +323,13 @@ export class YtDlpMediaEngine implements MediaEngine {
         const result = await this.options.runner.download({
           url: request.url,
           formatSelector: this.#buildVideoSelector(request),
-          args: buildVideoDownloadArgs({ cookiePath, platformExtraArgs, outputTemplate, maxBytes }),
+          args: buildVideoDownloadArgs({
+            ...extraction,
+            cookiePath,
+            platformExtraArgs,
+            outputTemplate,
+            maxBytes,
+          }),
           signal,
           onProgress,
         });
@@ -307,6 +345,7 @@ export class YtDlpMediaEngine implements MediaEngine {
             maxBytes,
           }),
           args: buildAudioDownloadArgs({
+            ...extraction,
             cookiePath,
             platformExtraArgs,
             outputTemplate,
@@ -325,7 +364,12 @@ export class YtDlpMediaEngine implements MediaEngine {
         await this.options.runner.download({
           url: request.url,
           formatSelector: undefined,
-          args: buildImageDownloadArgs({ cookiePath, platformExtraArgs, outputTemplate }),
+          args: buildImageDownloadArgs({
+            ...extraction,
+            cookiePath,
+            platformExtraArgs,
+            outputTemplate,
+          }),
           signal,
           onProgress,
         });

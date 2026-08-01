@@ -11,6 +11,15 @@ export interface PlatformDownloadPolicy {
   readonly platform: MediaPlatform;
 
   /**
+   * yt-dlp's own name for this extractor, which is not always our slug — X is
+   * `twitter` to yt-dlp. Needed to address `--extractor-args`, so an operator
+   * can tune a platform's extraction from the environment without a code
+   * change. That matters most for YouTube, where the workaround for a bot
+   * check changes faster than any release cycle.
+   */
+  readonly ytdlpExtractorKey: string;
+
+  /**
    * Try the unlabelled pre-muxed file before the labelled renditions.
    *
    * Instagram publishes every reel twice: as VP9 DASH renditions yt-dlp can

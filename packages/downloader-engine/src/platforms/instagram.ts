@@ -29,6 +29,7 @@ export const instagramPlatform: PlatformDefinition = {
   createPolicy(): PlatformDownloadPolicy {
     return {
       platform: MediaPlatform.Instagram,
+      ytdlpExtractorKey: 'instagram',
       preferProgressive: true,
       imageFirst: false,
       servesStandaloneImages: true,

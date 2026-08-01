@@ -14,6 +14,10 @@ export interface BaseArgsInput {
   readonly cookiePath: string | undefined;
   readonly platformExtraArgs: readonly string[];
   readonly socketTimeoutSeconds?: number;
+  /** Applies to every request. Usually a residential exit for a flagged VPS. */
+  readonly proxyUrl?: string | undefined;
+  /** Already prefixed with the extractor key, e.g. `youtube:player_client=tv`. */
+  readonly extractorArgs?: string | undefined;
 }
 
 /**
@@ -40,6 +44,8 @@ export function buildBaseArgs(input: BaseArgsInput): string[] {
   ];
 
   if (input.cookiePath !== undefined) args.push('--cookies', input.cookiePath);
+  if (input.proxyUrl !== undefined) args.push('--proxy', input.proxyUrl);
+  if (input.extractorArgs !== undefined) args.push('--extractor-args', input.extractorArgs);
   args.push(...input.platformExtraArgs);
   return args;
 }

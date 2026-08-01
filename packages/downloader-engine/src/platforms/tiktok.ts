@@ -32,6 +32,7 @@ export const tiktokPlatform: PlatformDefinition = {
   createPolicy(): PlatformDownloadPolicy {
     return {
       platform: MediaPlatform.TikTok,
+      ytdlpExtractorKey: 'tiktok',
       // TikTok's labelled formats are the good ones, and its progressive file
       // is already H.264 — no shortcut needed.
       preferProgressive: false,
