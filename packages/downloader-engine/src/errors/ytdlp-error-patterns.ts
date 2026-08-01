@@ -23,6 +23,20 @@ export interface YtDlpErrorPattern {
 
 export const YTDLP_ERROR_PATTERNS: readonly YtDlpErrorPattern[] = [
   {
+    // BEFORE LoginRequired, which it would otherwise match: the bot-check
+    // message ends with "Use --cookies-from-browser or --cookies", and that
+    // hint made a blocked SERVER look like private CONTENT to the user.
+    //
+    // The apostrophe is U+2019 in yt-dlp's output, not ASCII, so the pattern
+    // accepts either — matching only the straight quote silently misses every
+    // real occurrence.
+    code: EngineFailureCode.PlatformBlocked,
+    pattern:
+      /sign in to confirm you.{0,3}re not a bot|confirm you.{0,3}re not a bot|blocked it on copyright grounds|unable to extract.*player response.*bot/i,
+    reason:
+      'An anti-automation check against our IP range. The media is public; retrying from the same address cannot help, so it is not retryable — the operator has to change the exit address, the player client, or supply cookies.',
+  },
+  {
     code: EngineFailureCode.LoginRequired,
     pattern:
       /requested content is not available|login required|use --cookies|cookies-from-browser|you need to log in|sign in to confirm|rate-limit reached or login required|main webpage is locked behind the login page/i,

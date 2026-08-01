@@ -156,6 +156,7 @@ const CODE_MAP: Readonly<Record<EngineFailureCode, DownloadFailureCode>> = {
   [EngineFailureCode.UnsupportedMedia]: DownloadFailureCode.UnsupportedMedia,
   [EngineFailureCode.PrivateMedia]: DownloadFailureCode.PrivateMedia,
   [EngineFailureCode.LoginRequired]: DownloadFailureCode.LoginRequired,
+  [EngineFailureCode.PlatformBlocked]: DownloadFailureCode.PlatformBlocked,
   [EngineFailureCode.MediaNotFound]: DownloadFailureCode.MediaNotFound,
   [EngineFailureCode.FormatUnavailable]: DownloadFailureCode.FormatUnavailable,
   [EngineFailureCode.MediaTooLarge]: DownloadFailureCode.MediaTooLarge,

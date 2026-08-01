@@ -149,12 +149,15 @@ describe('YouTube inspection', () => {
     runner.failure = new YtDlpProcessError(
       1,
       null,
-      "ERROR: [youtube] 9BrUmidnzo0: Sign in to confirm you're not a bot. Use --cookies.",
+      'ERROR: [youtube] 9BrUmidnzo0: Sign in to confirm you’re not a bot. Use --cookies.',
     );
 
+    // PLATFORM_BLOCKED, not LOGIN_REQUIRED: the video is public and the refusal
+    // is aimed at this server's address. Reporting it as a login problem told
+    // the user their own link was private.
     await expect(
       bundle.engine.inspect({ url: WATCH_URL, platform: MediaPlatform.YouTube }),
-    ).rejects.toMatchObject({ code: 'LOGIN_REQUIRED' });
+    ).rejects.toMatchObject({ code: 'PLATFORM_BLOCKED' });
   });
 
   it('still tolerates a missing-format error on platforms that do serve images', async () => {

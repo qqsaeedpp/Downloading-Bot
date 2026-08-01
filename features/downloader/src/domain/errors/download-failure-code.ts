@@ -11,6 +11,8 @@ export const DownloadFailureCode = {
   UnsupportedMedia: 'UNSUPPORTED_MEDIA',
   PrivateMedia: 'PRIVATE_MEDIA',
   LoginRequired: 'LOGIN_REQUIRED',
+  /** The platform refused this deployment, not this user. See the engine code. */
+  PlatformBlocked: 'PLATFORM_BLOCKED',
   MediaNotFound: 'MEDIA_NOT_FOUND',
   FormatUnavailable: 'FORMAT_UNAVAILABLE',
   MediaTooLarge: 'MEDIA_TOO_LARGE',
@@ -42,6 +44,9 @@ export const PERMANENT_FAILURE_CODES: ReadonlySet<DownloadFailureCode> = new Set
   DownloadFailureCode.MediaNotFound,
   DownloadFailureCode.FormatUnavailable,
   DownloadFailureCode.MediaTooLarge,
+  // Retrying from the same address produces the same refusal, so a retry only
+  // burns a worker slot and adds to whatever tripped the check.
+  DownloadFailureCode.PlatformBlocked,
   DownloadFailureCode.JobCancelled,
   DownloadFailureCode.TooManyActiveJobs,
   DownloadFailureCode.SelectionExpired,

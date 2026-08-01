@@ -12,6 +12,15 @@ export const EngineFailureCode = {
   UnsupportedMedia: 'UNSUPPORTED_MEDIA',
   PrivateMedia: 'PRIVATE_MEDIA',
   LoginRequired: 'LOGIN_REQUIRED',
+  /**
+   * The platform refused US, not the user.
+   *
+   * Distinct from LOGIN_REQUIRED on purpose. YouTube's "Sign in to confirm
+   * you're not a bot" is an anti-automation check against the server's IP
+   * range: the video is perfectly public, and telling the user it is private
+   * blames them for a deployment problem they cannot see or fix.
+   */
+  PlatformBlocked: 'PLATFORM_BLOCKED',
   MediaNotFound: 'MEDIA_NOT_FOUND',
   FormatUnavailable: 'FORMAT_UNAVAILABLE',
   MediaTooLarge: 'MEDIA_TOO_LARGE',

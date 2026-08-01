@@ -202,6 +202,14 @@ export const fa = {
         return '🔒 این محتوا خصوصی است و قابل دریافت نیست.';
       case DownloadFailureCode.LoginRequired:
         return '🔒 این محتوا خصوصی است یا برای دیدنش نیاز به ورود به حساب کاربری است.';
+      case DownloadFailureCode.PlatformBlocked:
+        // Deliberately does NOT say the content is private. It is not: the
+        // platform is refusing this server, and blaming the video would send
+        // the user looking for a problem that does not exist.
+        return (
+          '🚧 این پلتفرم فعلاً به سرور ما اجازهٔ دریافت نمی‌دهد.\n\n' +
+          'این مشکل از سمت ماست، نه از لینک شما. لطفاً بعداً دوباره تلاش کنید.'
+        );
       case DownloadFailureCode.MediaNotFound:
         return '❌ این پست پیدا نشد. ممکن است حذف شده باشد.';
       case DownloadFailureCode.FormatUnavailable:

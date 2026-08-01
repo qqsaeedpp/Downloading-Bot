@@ -4,6 +4,7 @@ import type { AppContext } from '@tgtools/telegram';
 import { editStatusMessage } from '@tgtools/telegram';
 import type { InspectMediaUseCase } from '../../../application/use-cases/inspect-media.use-case.js';
 import { toDownloadError } from '../../../domain/errors/download-error.js';
+import { DownloadFailureCode } from '../../../domain/errors/download-failure-code.js';
 import { renderMediaCard } from '../presenters/media-card.presenter.js';
 import { fa } from '../messages/fa.js';
 
@@ -60,10 +61,21 @@ export function createLinkMessageHandler(deps: LinkMessageHandlerDependencies) {
       });
     } catch (error: unknown) {
       const failure = toDownloadError(error);
-      ctx.logger.warn('link inspection failed', {
-        code: failure.code,
-        error: describeError(error),
-      });
+      // A blocked platform is the operator's problem, not the user's, so it is
+      // logged at a level an operator actually watches. Everything else here is
+      // an ordinary bad link and stays at warn.
+      if (failure.code === DownloadFailureCode.PlatformBlocked) {
+        ctx.logger.error(
+          'the platform refused this server — change the exit address, try another player client ' +
+            '(<PLATFORM>_EXTRACTOR_ARGS), or supply cookies. Users see a "try later" message.',
+          { code: failure.code, error: describeError(error) },
+        );
+      } else {
+        ctx.logger.warn('link inspection failed', {
+          code: failure.code,
+          error: describeError(error),
+        });
+      }
       // The user gets the mapped sentence; the technical detail stays in the log.
       await editStatusMessage({
         api: ctx.api,
