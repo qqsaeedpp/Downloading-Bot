@@ -1,6 +1,10 @@
 import { access, constants } from 'node:fs/promises';
 import { loadConfig } from '@tgtools/config';
-import { describePotProviderProblem, probePotProvider } from '@tgtools/downloader-engine';
+import {
+  describePotProviderProblem,
+  probePotProvider,
+  reportCookieAccess,
+} from '@tgtools/downloader-engine';
 import { assertEnumCovers } from '@tgtools/database';
 import type { Logger } from '@tgtools/shared';
 import {
@@ -51,6 +55,16 @@ async function main(): Promise<void> {
   logger.info('PO token provider', { status: potStatus.kind });
   const potProblem = describePotProviderProblem(potStatus);
   if (potProblem !== undefined) logger.error(potProblem);
+
+  // Read now, not on the first job that needs one. The bot and the worker mount
+  // their cookies separately, and the way that divergence surfaces otherwise is
+  // a video that lists every quality and then fails the moment a user picks one.
+  const cookieReports = await reportCookieAccess(config.cookies, logger);
+  if (cookieReports.length > 0) {
+    logger.info('cookie files', {
+      cookies: Object.fromEntries(cookieReports.map((r) => [r.platform, r.kind])),
+    });
+  }
 
   if (toolchain.ytDlpVersion === undefined) {
     // Fail loudly at startup rather than on the first user's download.

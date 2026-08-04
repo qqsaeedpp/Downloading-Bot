@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { LogContext, Logger } from '@tgtools/shared';
 import { MediaPlatform, createNoopLogger } from '@tgtools/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { FileCookieProvider } from './file-cookie-provider.js';
+import { FileCookieProvider, reportCookieAccess } from './file-cookie-provider.js';
 
 interface Line {
   readonly level: 'warn' | 'error';
@@ -115,5 +115,99 @@ describe('a configured cookie file that cannot be read', () => {
     });
 
     await expect(provider.getCookies(MediaPlatform.YouTube)).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * The startup check. Its whole reason to exist: the bot and the worker are
+ * separate containers with separate mounts, and a user's first sign that they
+ * disagree was a video that listed every quality and then refused to download.
+ */
+describe('reportCookieAccess', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'tgtools-cookie-report-'));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('reports nothing and logs nothing when no cookies are configured', async () => {
+    const { logger, lines } = createRecordingLogger();
+    await expect(reportCookieAccess({}, logger)).resolves.toEqual([]);
+    expect(lines).toEqual([]);
+  });
+
+  it('passes a good file silently', async () => {
+    const path = join(dir, 'ok.txt');
+    await writeFile(path, '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\ta\tb\n');
+
+    const { logger, lines } = createRecordingLogger();
+    const reports = await reportCookieAccess({ [MediaPlatform.YouTube]: path }, logger);
+
+    expect(reports).toEqual([{ platform: MediaPlatform.YouTube, kind: 'usable' }]);
+    expect(lines).toEqual([]);
+  });
+
+  it('reports a file this container cannot reach, and says the two can differ', async () => {
+    const { logger, lines } = createRecordingLogger();
+    const reports = await reportCookieAccess(
+      { [MediaPlatform.YouTube]: join(dir, 'absent.txt') },
+      logger,
+    );
+
+    expect(reports[0]?.kind).toBe('unreadable');
+    expect(lines[0]?.level).toBe('error');
+    // The sentence that would have saved an evening.
+    expect(lines[0]?.message).toContain('one working does not mean both do');
+  });
+
+  it('catches a JSON export, which yt-dlp rejects with a confusing parse error', async () => {
+    const path = join(dir, 'cookies.json');
+    await writeFile(path, '[{"name":"SID","value":"x"}]');
+
+    const { logger, lines } = createRecordingLogger();
+    const reports = await reportCookieAccess({ [MediaPlatform.YouTube]: path }, logger);
+
+    expect(reports[0]?.kind).toBe('wrong-format');
+    expect(lines[0]?.level).toBe('error');
+  });
+
+  it('treats an empty file as degraded rather than broken', async () => {
+    // `touch cookies.txt` is how a placeholder mount is usually created.
+    const path = join(dir, 'empty.txt');
+    await writeFile(path, '');
+
+    const { logger, lines } = createRecordingLogger();
+    const reports = await reportCookieAccess({ [MediaPlatform.YouTube]: path }, logger);
+
+    expect(reports[0]?.kind).toBe('empty');
+    expect(lines[0]?.level).toBe('warn');
+  });
+
+  it('checks every configured platform, not just the first that fails', async () => {
+    const good = join(dir, 'good.txt');
+    await writeFile(good, '# Netscape HTTP Cookie File\n');
+
+    const { logger } = createRecordingLogger();
+    const reports = await reportCookieAccess(
+      { [MediaPlatform.YouTube]: join(dir, 'missing.txt'), [MediaPlatform.Instagram]: good },
+      logger,
+    );
+
+    expect(reports).toHaveLength(2);
+    expect(reports.map((r) => r.kind).sort()).toEqual(['unreadable', 'usable']);
+  });
+
+  it('never puts cookie content in the log', async () => {
+    const path = join(dir, 'cookies.json');
+    await writeFile(path, '[{"name":"SID","value":"SECRETVALUE"}]');
+
+    const { logger, lines } = createRecordingLogger();
+    await reportCookieAccess({ [MediaPlatform.YouTube]: path }, logger);
+
+    expect(JSON.stringify(lines)).not.toContain('SECRETVALUE');
   });
 });

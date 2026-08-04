@@ -69,7 +69,12 @@ export type { SizeWatchdog } from './workspace/size-watchdog.js';
 
 export { NoCookieProvider } from './cookies/cookie-provider.js';
 export type { CookieProvider } from './cookies/cookie-provider.js';
-export { FileCookieProvider, looksLikeNetscapeCookieJar } from './cookies/file-cookie-provider.js';
+export {
+  FileCookieProvider,
+  looksLikeNetscapeCookieJar,
+  reportCookieAccess,
+} from './cookies/file-cookie-provider.js';
+export type { CookieAccessReport } from './cookies/file-cookie-provider.js';
 export { withCookieFile } from './cookies/cookie-file.js';
 
 export {

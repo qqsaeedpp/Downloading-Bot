@@ -119,6 +119,64 @@ function hintFor(error: unknown): string {
   return 'check the mount, the path and the file ownership';
 }
 
+/** What a startup check found for one configured cookie file. */
+export type CookieAccessReport =
+  | { readonly platform: MediaPlatform; readonly kind: 'usable' }
+  | { readonly platform: MediaPlatform; readonly kind: 'empty' }
+  | { readonly platform: MediaPlatform; readonly kind: 'wrong-format' }
+  | { readonly platform: MediaPlatform; readonly kind: 'unreadable'; readonly hint: string };
+
+/**
+ * Check every configured cookie file once, at startup.
+ *
+ * Cookies are otherwise read lazily, on the first job that needs one, so a
+ * container that cannot read its cookie file looks perfectly healthy until a
+ * user clicks a button. That produced the worst possible symptom: the bot
+ * inspected a video, listed every quality with its size, and only then did the
+ * worker — a DIFFERENT container, with its own mounts and its own environment —
+ * fail on the download. The two diverging is invisible at deploy time and
+ * obvious here.
+ *
+ * Reports rather than throws. A missing cookie is a degraded deployment, not a
+ * broken one: most links need no credential at all.
+ */
+export async function reportCookieAccess(
+  paths: Readonly<Partial<Record<MediaPlatform, string>>>,
+  logger: Logger,
+): Promise<readonly CookieAccessReport[]> {
+  const reports: CookieAccessReport[] = [];
+
+  for (const [platform, path] of Object.entries(paths) as [MediaPlatform, string][]) {
+    try {
+      const content = await readFile(path, 'utf8');
+      if (content.trim() === '') {
+        reports.push({ platform, kind: 'empty' });
+        logger.warn('cookie file is empty; this platform will run unauthenticated', { platform });
+      } else if (!looksLikeNetscapeCookieJar(content)) {
+        reports.push({ platform, kind: 'wrong-format' });
+        logger.error(
+          'cookie file is not in Netscape format and will be ignored; export it with a ' +
+            '"# Netscape HTTP Cookie File" header, not as JSON',
+          { platform },
+        );
+      } else {
+        reports.push({ platform, kind: 'usable' });
+      }
+    } catch (error: unknown) {
+      const hint = hintFor(error);
+      reports.push({ platform, kind: 'unreadable', hint });
+      logger.error(
+        'cookie file is configured but THIS CONTAINER cannot read it; every request for this ' +
+          'platform will go out UNAUTHENTICATED. Note that the bot and the worker mount it ' +
+          'separately — one working does not mean both do.',
+        { platform, path, hint, error: describeError(error) },
+      );
+    }
+  }
+
+  return reports;
+}
+
 /**
  * yt-dlp accepts only the Netscape format and reports a confusing parse error
  * for anything else — usually a JSON export from a browser extension.
