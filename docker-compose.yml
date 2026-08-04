@@ -70,6 +70,7 @@ x-app-env: &app-env
   X_EXTRACTOR_ARGS: ${X_EXTRACTOR_ARGS:-}
   PINTEREST_EXTRACTOR_ARGS: ${PINTEREST_EXTRACTOR_ARGS:-}
   YOUTUBE_EXTRACTOR_ARGS: ${YOUTUBE_EXTRACTOR_ARGS:-}
+  YOUTUBE_POT_PROVIDER_URL: ${YOUTUBE_POT_PROVIDER_URL:-}
   TZ: ${TZ:-UTC}
 
 services:
@@ -110,6 +111,32 @@ services:
       retries: 5
     networks: [internal]
 
+  # Proof-of-origin token provider. Optional, free, and off by default.
+  #
+  # YouTube answers a flagged address with "sign in to confirm you're not a
+  # bot", which is a demand for a PO token — an attestation that the request came
+  # from a real browser. This service mints them locally, so the bot can answer
+  # without an account and without a paid residential proxy.
+  #
+  # Enabled ONLY by setting YOUTUBE_POT_PROVIDER_URL; with that variable empty
+  # the container still starts but nothing ever calls it. Bound to the internal
+  # network with no published port: it is not something to expose.
+  #
+  # Honest caveat, from the project's own README: a PO token "may help your
+  # traffic seem more legitimate" but does not guarantee a bypass.
+  bgutil-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider:${POT_PLUGIN_VERSION:-1.3.1}
+    restart: unless-stopped
+    logging: *logging
+    init: true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4416/ping || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks: [internal]
+
   # One-shot. Migrations must not run from the services themselves: two
   # replicas booting at once would race on the same DDL, and a failed migration
   # should stop a deploy rather than crash-loop a bot.
@@ -127,6 +154,7 @@ services:
       args:
         YTDLP_VERSION: ${YTDLP_VERSION:-2026.07.04}
         DENO_VERSION: ${DENO_VERSION:-v2.9.4}
+        POT_PLUGIN_VERSION: ${POT_PLUGIN_VERSION:-1.3.1}
     restart: "no"
     logging: *logging
     environment: *app-env
@@ -143,6 +171,7 @@ services:
       args:
         YTDLP_VERSION: ${YTDLP_VERSION:-2026.07.04}
         DENO_VERSION: ${DENO_VERSION:-v2.9.4}
+        POT_PLUGIN_VERSION: ${POT_PLUGIN_VERSION:-1.3.1}
     restart: unless-stopped
     logging: *logging
     environment:
@@ -175,6 +204,7 @@ services:
       args:
         YTDLP_VERSION: ${YTDLP_VERSION:-2026.07.04}
         DENO_VERSION: ${DENO_VERSION:-v2.9.4}
+        POT_PLUGIN_VERSION: ${POT_PLUGIN_VERSION:-1.3.1}
     restart: unless-stopped
     logging: *logging
     environment:

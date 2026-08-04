@@ -16,8 +16,15 @@ export interface BaseArgsInput {
   readonly socketTimeoutSeconds?: number;
   /** Applies to every request. Usually a residential exit for a flagged VPS. */
   readonly proxyUrl?: string | undefined;
-  /** Already prefixed with the extractor key, e.g. `youtube:player_client=tv`. */
-  readonly extractorArgs?: string | undefined;
+  /**
+   * Each entry already carries its own extractor key, e.g.
+   * `youtube:player_client=tv` or `youtubepot-bgutilhttp:base_url=http://…`.
+   *
+   * A list rather than one string because the keys differ: the PO token
+   * provider is registered under its own extractor name, so it cannot be folded
+   * into the platform's entry. yt-dlp merges repeated `--extractor-args`.
+   */
+  readonly extractorArgs?: readonly string[] | undefined;
 }
 
 /**
@@ -45,7 +52,7 @@ export function buildBaseArgs(input: BaseArgsInput): string[] {
 
   if (input.cookiePath !== undefined) args.push('--cookies', input.cookiePath);
   if (input.proxyUrl !== undefined) args.push('--proxy', input.proxyUrl);
-  if (input.extractorArgs !== undefined) args.push('--extractor-args', input.extractorArgs);
+  for (const entry of input.extractorArgs ?? []) args.push('--extractor-args', entry);
   args.push(...input.platformExtraArgs);
   return args;
 }

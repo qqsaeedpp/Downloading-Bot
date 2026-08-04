@@ -109,6 +109,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     extraction: {
       proxyUrl: env.YTDLP_PROXY,
       extractorArgs: buildExtractorArgs(env),
+      potProviderUrl: env.YOUTUBE_POT_PROVIDER_URL,
     },
 
     health: {

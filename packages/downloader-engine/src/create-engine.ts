@@ -52,6 +52,7 @@ export interface CreateEngineOptions {
   readonly extraction?: {
     readonly proxyUrl?: string | undefined;
     readonly extractorArgs?: Readonly<Partial<Record<MediaPlatform, string>>> | undefined;
+    readonly potProviderUrl?: string | undefined;
   };
   readonly idGenerator: IdGenerator;
   readonly logger: Logger;
@@ -154,6 +155,7 @@ export function createDownloaderEngine(options: CreateEngineOptions): EngineBund
     extraction: {
       proxyUrl: options.extraction?.proxyUrl,
       extractorArgs: options.extraction?.extractorArgs ?? {},
+      potProviderUrl: options.extraction?.potProviderUrl,
     },
   });
 

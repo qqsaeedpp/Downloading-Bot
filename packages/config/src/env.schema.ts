@@ -128,6 +128,11 @@ export const envSchema = z.object({
   // Escape hatches, so the answer to an extractor change is an environment
   // variable and a restart rather than a release.
   YTDLP_PROXY: optionalText(),
+  // Base URL of a self-hosted proof-of-origin token provider, e.g.
+  // `http://bgutil-provider:4416`. Account-free and costs nothing to run; the
+  // provider's own README is clear that a PO token "may help" rather than
+  // guarantee a bypass, so this is a lever to try, not a promise.
+  YOUTUBE_POT_PROVIDER_URL: optionalText(),
   INSTAGRAM_EXTRACTOR_ARGS: optionalText(),
   TIKTOK_EXTRACTOR_ARGS: optionalText(),
   X_EXTRACTOR_ARGS: optionalText(),

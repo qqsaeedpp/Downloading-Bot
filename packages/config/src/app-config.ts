@@ -121,6 +121,16 @@ export interface ExtractionConfig {
    * anti-automation measure is a configuration change, not a release.
    */
   readonly extractorArgs: Readonly<Partial<Record<MediaPlatform, string>>>;
+  /**
+   * Base URL of a self-hosted proof-of-origin token provider.
+   *
+   * The account-free counterpart to {@link proxyUrl}: it attests that a request
+   * came from a real browser environment, which is what YouTube's bot check is
+   * actually asking for. Costs nothing to run and puts no account at risk, but
+   * the upstream project is explicit that a PO token "may help" rather than
+   * guarantee a bypass — on a comprehensively flagged address it can still fail.
+   */
+  readonly potProviderUrl: string | undefined;
 }
 
 /**

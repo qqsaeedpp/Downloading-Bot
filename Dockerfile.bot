@@ -11,6 +11,9 @@ ARG YTDLP_VERSION=2026.07.04
 ARG NODE_VERSION=22
 # Required for YouTube extraction; see the note in Dockerfile.worker.
 ARG DENO_VERSION=v2.9.4
+# Proof-of-origin token plugin; see the note in Dockerfile.worker. The bot needs
+# it as much as the worker does — inspection hits the same bot check as download.
+ARG POT_PLUGIN_VERSION=1.3.1
 
 # ── Stage 1: install dependencies ────────────────────────────────────────────
 FROM node:${NODE_VERSION}-bookworm-slim AS deps
@@ -82,6 +85,19 @@ RUN curl -fsSL --retry 3 \
 RUN curl -fsSL https://deno.land/install.sh \
         | DENO_INSTALL=/usr/local sh -s "${DENO_VERSION}" \
     && /usr/local/bin/deno --version
+
+# yt-dlp discovers plugins under /etc/yt-dlp/plugins, and the release zip already
+# carries the `yt_dlp_plugins/` tree its loader expects. Asserting that directory
+# exists catches a redirect to an HTML error page, which unzips "successfully"
+# into something yt-dlp would silently ignore.
+ARG POT_PLUGIN_VERSION
+RUN curl -fsSL --retry 3 \
+        "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/releases/download/${POT_PLUGIN_VERSION}/bgutil-ytdlp-pot-provider.zip" \
+        -o /tmp/pot-plugin.zip \
+    && mkdir -p /etc/yt-dlp/plugins \
+    && unzip -q /tmp/pot-plugin.zip -d /etc/yt-dlp/plugins/bgutil \
+    && rm /tmp/pot-plugin.zip \
+    && test -d /etc/yt-dlp/plugins/bgutil/yt_dlp_plugins
 
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules

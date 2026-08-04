@@ -89,6 +89,10 @@ export const youtubePlatform: PlatformDefinition = {
     return {
       platform: MediaPlatform.YouTube,
       ytdlpExtractorKey: 'youtube',
+      // Matches the `bgutil-ytdlp-pot-provider` plugin baked into the images.
+      // Inert unless an operator points YOUTUBE_POT_PROVIDER_URL at a running
+      // provider, so a deployment that does not want one pays nothing for it.
+      potProviderExtractorKey: 'youtubepot-bgutilhttp',
       // YouTube labels its formats accurately, so the height filters land where
       // they should; there is no unlabelled pre-muxed file to shortcut to.
       preferProgressive: false,

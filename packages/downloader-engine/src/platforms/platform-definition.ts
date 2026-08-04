@@ -20,6 +20,21 @@ export interface PlatformDownloadPolicy {
   readonly ytdlpExtractorKey: string;
 
   /**
+   * The extractor key of a proof-of-origin token provider plugin, when one
+   * exists for this platform.
+   *
+   * Only YouTube has such a scheme. A PO token is a cryptographic attestation
+   * that a request came from a real browser, and supplying one is the only
+   * account-free lever left against the bot check on a flagged address. Its own
+   * key — `youtubepot-bgutilhttp`, not `youtube` — is why {@link BaseArgsInput}
+   * takes a list of `--extractor-args` rather than a single string.
+   *
+   * Undefined on every other platform, which is what keeps the engine free of a
+   * "if this is YouTube" branch.
+   */
+  readonly potProviderExtractorKey?: string;
+
+  /**
    * Try the unlabelled pre-muxed file before the labelled renditions.
    *
    * Instagram publishes every reel twice: as VP9 DASH renditions yt-dlp can

@@ -60,11 +60,31 @@ describe('buildBaseArgs', () => {
     // answered with an environment variable instead of a release.
     expect(
       flagValue(
-        buildBaseArgs({ ...base, extractorArgs: 'youtube:player_client=android_vr' }),
+        buildBaseArgs({ ...base, extractorArgs: ['youtube:player_client=android_vr'] }),
         '--extractor-args',
       ),
     ).toBe('youtube:player_client=android_vr');
     expect(buildBaseArgs(base)).not.toContain('--extractor-args');
+  });
+
+  it('repeats the flag once per entry, because the keys differ', () => {
+    // A player-client override addresses `youtube`; the PO token provider
+    // addresses `youtubepot-bgutilhttp`. Joining them into one value would
+    // address neither, so each gets its own `--extractor-args`.
+    const args = buildBaseArgs({
+      ...base,
+      extractorArgs: ['youtube:player_client=tv', 'youtubepot-bgutilhttp:base_url=http://p:4416'],
+    });
+
+    const values = args.flatMap((arg, i) => (args[i - 1] === '--extractor-args' ? [arg] : []));
+    expect(values).toEqual([
+      'youtube:player_client=tv',
+      'youtubepot-bgutilhttp:base_url=http://p:4416',
+    ]);
+  });
+
+  it('emits no flag at all for an empty list', () => {
+    expect(buildBaseArgs({ ...base, extractorArgs: [] })).not.toContain('--extractor-args');
   });
 });
 

@@ -69,6 +69,8 @@ export interface YtDlpMediaEngineOptions {
   readonly extraction?: {
     readonly proxyUrl?: string | undefined;
     readonly extractorArgs?: Readonly<Partial<Record<MediaPlatform, string>>> | undefined;
+    /** Base URL of a running proof-of-origin token provider, if any. */
+    readonly potProviderUrl?: string | undefined;
   };
 }
 
@@ -101,14 +103,24 @@ export class YtDlpMediaEngine implements MediaEngine {
    */
   #extractionArgs(policy: PlatformDownloadPolicy): {
     proxyUrl: string | undefined;
-    extractorArgs: string | undefined;
+    extractorArgs: readonly string[];
   } {
+    const extractorArgs: string[] = [];
+
     const configured = this.options.extraction?.extractorArgs?.[policy.platform];
-    return {
-      proxyUrl: this.options.extraction?.proxyUrl,
-      extractorArgs:
-        configured === undefined ? undefined : `${policy.ytdlpExtractorKey}:${configured}`,
-    };
+    if (configured !== undefined) {
+      extractorArgs.push(`${policy.ytdlpExtractorKey}:${configured}`);
+    }
+
+    // The PO token provider registers under its OWN extractor key, so this is a
+    // second `--extractor-args` rather than part of the entry above. Emitted
+    // only where the platform has such a scheme and the operator is running one.
+    const potUrl = this.options.extraction?.potProviderUrl;
+    if (potUrl !== undefined && policy.potProviderExtractorKey !== undefined) {
+      extractorArgs.push(`${policy.potProviderExtractorKey}:base_url=${potUrl}`);
+    }
+
+    return { proxyUrl: this.options.extraction?.proxyUrl, extractorArgs };
   }
 
   async inspect(request: EngineInspectRequest): Promise<EngineMediaInfo> {
