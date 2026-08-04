@@ -93,11 +93,22 @@ export class FileCookieProvider implements CookieProvider {
  * alone: the containers run as a non-root user, so a cookie file left owned by
  * root with `0600` is invisible to them — and every download then silently goes
  * out unauthenticated.
+ *
+ * The EACCES text names the DIRECTORY as well as the file, and deliberately so.
+ * Reading a file requires the execute bit on every directory above it, so a
+ * `secrets/` left at `0700 root:root` denies the read no matter what the file
+ * itself allows. An earlier version of this hint mentioned only the file, and
+ * the result was an operator running `chown` on it, seeing no change, and
+ * reasonably concluding the mount was broken.
  */
 function hintFor(error: unknown): string {
   const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
   if (code === 'EACCES' || code === 'EPERM') {
-    return 'the containers run as uid 1001; run `chown 1001:1001 <file>` on the host';
+    return (
+      'the containers run as uid 1001. Fix the DIRECTORY as well as the file — ' +
+      'a read needs the execute bit on every directory above it: ' +
+      '`chown -R 1001:1001 <dir> && chmod 755 <dir> && chmod 644 <dir>/<file>`'
+    );
   }
   if (code === 'ENOENT') {
     return 'no such file — check the path is the one INSIDE the container (/run/secrets/...), not the host path';

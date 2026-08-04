@@ -48,6 +48,9 @@ export { pinterestPlatform } from './platforms/pinterest.js';
 export { xPlatform } from './platforms/x.js';
 export { extractYouTubeVideoId, youtubePlatform } from './platforms/youtube.js';
 
+export { describePotProviderProblem, probePotProvider } from './ytdlp/pot-provider-probe.js';
+export type { PotProviderStatus } from './ytdlp/pot-provider-probe.js';
+
 export { UrlGuard, normalizeUrl } from './security/url-guard.js';
 export type { SafeMediaUrl } from './security/url-guard.js';
 export { inspectIpAddress, isPublicIpAddress } from './security/ip-rules.js';

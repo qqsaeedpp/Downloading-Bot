@@ -1,5 +1,6 @@
 import { access, constants } from 'node:fs/promises';
 import { loadConfig } from '@tgtools/config';
+import { describePotProviderProblem, probePotProvider } from '@tgtools/downloader-engine';
 import { assertEnumCovers } from '@tgtools/database';
 import type { Logger } from '@tgtools/shared';
 import {
@@ -42,6 +43,15 @@ async function main(): Promise<void> {
     jsRuntime: toolchain.jsRuntimeVersion ?? 'MISSING',
   });
   warnIfNoJsRuntime(logger, toolchain.jsRuntimeVersion);
+
+  // Verified at startup, not on the first user's link. "I set the variable and
+  // it still says bot check" has two completely different causes -- the provider
+  // is unreachable, or it answered and was not enough -- and only one of them is
+  // worth more of the operator's evening.
+  const potStatus = await probePotProvider(config.extraction.potProviderUrl);
+  logger.info('PO token provider', { status: potStatus.kind });
+  const potProblem = describePotProviderProblem(potStatus);
+  if (potProblem !== undefined) logger.error(potProblem);
 
   // Middleware order is the security order: identity before rate limiting,
   // rate limiting before anything that costs time or money.
