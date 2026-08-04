@@ -129,8 +129,19 @@ services:
     restart: unless-stopped
     logging: *logging
     init: true
+    # Probed with `node`, not curl. This is a slim Node image that ships neither
+    # curl nor wget, so a curl-based check reported a perfectly healthy provider
+    # as `(unhealthy)` forever — a false alarm is worse than no check, because it
+    # sends an operator debugging the one part that was working. `node` is the
+    # image's own entrypoint and cannot be missing. `/ping` is the provider's
+    # documented liveness route. (The `-deno` flavour of this image would need
+    # `deno` here instead; the tag above pins the Node one.)
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4416/ping || exit 1"]
+      test:
+        - CMD
+        - node
+        - "-e"
+        - "require('http').get('http://127.0.0.1:4416/ping', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
       interval: 30s
       timeout: 5s
       retries: 3
