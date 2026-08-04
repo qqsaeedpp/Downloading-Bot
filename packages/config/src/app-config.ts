@@ -50,6 +50,15 @@ export interface LimitsConfig {
   readonly maxUploadBytes: number;
   /** Above this, an incompatible codec is remuxed rather than re-encoded. */
   readonly maxTranscodeBytes: number;
+  /**
+   * Ship a file Telegram can already play rather than re-encoding it first.
+   *
+   * The trade is arrival time against in-app playback: a 4K AV1 clip takes
+   * longer to transcode than most people will wait, so it is delivered as a
+   * document with its original codec instead. Turn off to always normalise to
+   * H.264/AAC, however long that takes.
+   */
+  readonly videoFastDelivery: boolean;
   readonly maxActiveJobsPerUser: number;
   readonly rateLimitWindowMs: number;
   readonly rateLimitMaxRequests: number;

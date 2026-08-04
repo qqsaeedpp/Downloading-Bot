@@ -2,6 +2,7 @@ import { autoRetry } from '@grammyjs/auto-retry';
 import type { AppConfig } from '@tgtools/config';
 import type { Logger } from '@tgtools/shared';
 import { Api, Bot } from 'grammy';
+import { PUBLIC_BOT_API_ROOT } from './api-root.js';
 import type { AppContext } from './context.js';
 
 /**
@@ -21,14 +22,26 @@ export interface CreateBotOptions {
   readonly logger: Logger;
 }
 
+/**
+ * The single place a Telegram client is configured, for both processes.
+ *
+ * A local Bot API server is selected by `apiRoot` and NOTHING else. grammY's
+ * `environment` option accepts only `prod` and `test`; setting it to anything
+ * resembling "local" is not a supported value and would be rejected — the fact
+ * that the two look interchangeable is exactly why this is written down once.
+ */
+export function resolveApiRoot(config: AppConfig): string {
+  return (config.telegram.apiRoot ?? PUBLIC_BOT_API_ROOT).replace(/\/+$/, '');
+}
+
 export function createBot({ config, logger }: CreateBotOptions): Bot<AppContext> {
   const bot = new Bot<AppContext>(config.telegram.botToken, {
-    client: config.telegram.apiRoot === undefined ? {} : { apiRoot: config.telegram.apiRoot },
+    client: { apiRoot: resolveApiRoot(config) },
   });
 
   bot.api.config.use(autoRetry(AUTO_RETRY));
   logger.debug('telegram bot client created', {
-    apiRoot: config.telegram.apiRoot ?? 'default',
+    apiRoot: resolveApiRoot(config),
     localApi: config.telegram.useLocalApi,
   });
   return bot;
@@ -40,10 +53,10 @@ export function createBot({ config, logger }: CreateBotOptions): Bot<AppContext>
  * updates.
  */
 export function createTelegramApi({ config }: { config: AppConfig }): Api {
-  const api = new Api(
-    config.telegram.botToken,
-    config.telegram.apiRoot === undefined ? {} : { apiRoot: config.telegram.apiRoot },
-  );
+  // Resolved through the same helper as the bot's client. The two processes
+  // disagreeing about where Telegram is produces the worst symptom in this
+  // system: the bot lists qualities the worker then cannot deliver.
+  const api = new Api(config.telegram.botToken, { apiRoot: resolveApiRoot(config) });
   api.config.use(autoRetry(AUTO_RETRY));
   return api;
 }

@@ -213,10 +213,18 @@ private directory means cleanup is one `rm -r`.
 mobile clients decode H.264 reliably and little else: a VP9 reel shows its first
 frame and then freezes while the audio keeps playing.
 
-So: probe with ffprobe, remux when the codecs are already safe (which still
-fixes the moov atom position that makes players stall), and re-encode when they
-are not — unless the file is over `MAX_TRANSCODE_MB`, where the CPU cost stops
-being worth it. See `planNormalization`, which is pure and unit-tested.
+So: probe with ffprobe, then pick one of four outcomes. H.264/AAC already in an
+MP4 is sent **untouched** — a remux would fix the moov atom position, but that
+buys a faster first frame once against a full pass over the file every time, for
+a file that already plays. The same streams in another container are stream-copied
+into MP4 with `+faststart`. A safe picture with unsafe sound (only AAC counts)
+gets an audio-only re-encode with the video copied, which is cheap because audio
+is not priced per pixel. Anything else needs a real re-encode — and that is
+declined, with the original shipped as a **document**, when `VIDEO_FAST_DELIVERY`
+is on, when the file is over `MAX_TRANSCODE_MB`, when the picture is too tall to
+re-encode within a sensible wait, or when even the result would not fit the upload
+ceiling. Minutes of CPU while the user watches a progress message is the worse
+outcome. See `planNormalization`, which is pure and unit-tested.
 
 ### ADR-12 — A two-tier size limit
 

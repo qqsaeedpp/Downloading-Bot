@@ -25,8 +25,12 @@ second and tenth tool as much as for this one.
 - **Video, audio and images**, including image-only Pinterest pins and Instagram
   photo posts.
 - **Playback normalisation.** An MP4 container is not the same thing as a
-  playable file; VP9, AV1 and HEVC are re-encoded to H.264/AAC with the moov
-  atom at the front.
+  playable file. ffprobe picks one of four outcomes: H.264/AAC already in an MP4
+  is sent untouched, the same streams in the wrong container are stream-copied
+  into one with the moov atom at the front, a bad soundtrack on good video gets
+  an audio-only re-encode with the picture copied, and VP9/AV1/HEVC arrives as a
+  document — because a re-encode of a large clip costs minutes the person
+  waiting did not agree to.
 - **Live progress** in Persian, throttled so a fast download does not get the
   chat rate-limited.
 - **Cancellation** that actually stops the running process, across the
@@ -88,16 +92,23 @@ git clone <this repo> && cd telegram-tools-bot
 cp .env.example .env
 ```
 
-Edit `.env`. Only three variables have no default:
+Edit `.env`. Only five variables have no default:
 
 ```env
 TELEGRAM_BOT_TOKEN=   # from @BotFather
 POSTGRES_PASSWORD=    # anything long and random
 DATABASE_URL=         # ignored by Compose, required by the schema
+TELEGRAM_API_ID=      # from my.telegram.org — an APPLICATION identity, not the bot token
+TELEGRAM_API_HASH=    # likewise
 ```
 
 > Compose builds its own `DATABASE_URL` and `REDIS_URL` from the service names,
 > so the values in `.env` are only used when you run outside Compose.
+
+> The last two belong to the bundled `telegram-bot-api` service. Compose
+> interpolates the whole file before it starts anything, so they are required
+> even if you never run that service; delete it from `docker-compose.yml` if you
+> do not want a local Bot API server.
 
 ```bash
 mkdir -p secrets            # cookie mount point; may stay empty
@@ -162,11 +173,16 @@ surfacing as a mystery later.
 Some checks are about _relationships between_ variables, and each exists because
 the failure it prevents is otherwise invisible until a real job runs:
 
-- `MAX_UPLOAD_MB` above **50** requires a local Bot API server
-  (`TELEGRAM_USE_LOCAL_API=true` + `TELEGRAM_API_ROOT`). Telegram's public API
+- `TELEGRAM_UPLOAD_LIMIT_MB` above **50** requires a local Bot API server
+  (`TELEGRAM_LOCAL_MODE=true` + `TELEGRAM_API_ROOT`). Telegram's public API
   refuses anything larger, so without this the bot would look healthy and fail
   every upload.
-- `MAX_UPLOAD_MB` ≤ `MAX_DOWNLOAD_MB`, and `MAX_TRANSCODE_MB` ≤ `MAX_DOWNLOAD_MB`.
+- `TELEGRAM_UPLOAD_LIMIT_MB` ≤ `MAX_DOWNLOAD_MB`, and `MAX_TRANSCODE_MB` ≤
+  `MAX_DOWNLOAD_MB`.
+- `TELEGRAM_LOCAL_MODE` and its older spelling `TELEGRAM_USE_LOCAL_API` must
+  agree, as must `TELEGRAM_UPLOAD_LIMIT_MB` and its older spelling
+  `MAX_UPLOAD_MB`. Two different answers to one question are refused rather than
+  resolved by precedence, which would silently ignore the name you edited.
 - `JOB_TIMEOUT_MS` ≥ download + ffmpeg + upload timeouts, or a job is killed
   before its slowest legal path can finish.
 - `DOWNLOAD_JOB_LOCK_DURATION_MS` < `JOB_TIMEOUT_MS`, or a job can never be
@@ -176,11 +192,22 @@ the failure it prevents is otherwise invisible until a real job runs:
 
 Three different numbers, for three different reasons:
 
-| Variable           | Bounds                                   | Default |
-| ------------------ | ---------------------------------------- | ------- |
-| `MAX_DOWNLOAD_MB`  | what may be pulled from the network      | 500     |
-| `MAX_UPLOAD_MB`    | what Telegram will accept                | 50      |
-| `MAX_TRANSCODE_MB` | above this, remux instead of re-encoding | 250     |
+| Variable                   | Bounds                                                | Default                   |
+| -------------------------- | ----------------------------------------------------- | ------------------------- |
+| `MAX_DOWNLOAD_MB`          | what may be pulled from the network                   | 500 (2000 in Compose)     |
+| `TELEGRAM_UPLOAD_LIMIT_MB` | what Telegram will accept                             | 50, or 1900 in local mode |
+| `MAX_TRANSCODE_MB`         | above this, ship as a document instead of re-encoding | 80                        |
+
+The upload ceiling has no default of its own: the right one depends on
+`TELEGRAM_LOCAL_MODE`, and a fixed default would make a deliberate 50 look
+identical to an unset one. Compose raises `MAX_DOWNLOAD_MB` to 2000 because the
+1900 MB local-mode ceiling would otherwise break the "upload ≤ download" rule and
+stop the stack from booting.
+
+The upload ceiling is capped at **1900**, not the 2000 a local server advertises.
+The server measures its limit on the encoded multipart body, which is larger than
+the file inside it, so a ceiling of exactly 2000 gets the request refused after
+the whole file has been streamed — the most expensive possible moment to fail.
 
 A file can clear the download ceiling and still be undeliverable, which is why
 the upload ceiling is checked before the upload starts rather than discovered
@@ -339,8 +366,15 @@ production:
   `yt-dlp --dump-single-json`, which decodes nothing, so the dependency would buy
   nothing and invite the bot to start doing work that belongs in the worker.
   `docker compose exec bot which ffmpeg` failing is the design, not a fault.
-- **50 MB without a local Bot API server.** Larger files require running your
-  own, which is a deployment decision this repo documents but does not automate.
+- **50 MB on Telegram's public API, 1900 MB on your own.** `docker-compose.yml`
+  ships a `telegram-bot-api` service that lifts the ceiling, but running it stays
+  a deployment decision: it wants an application identity from my.telegram.org, a
+  volume for its TDLib session, and disk that can hold gigabyte files.
+- **An incompatible codec arrives as a document, not an inline video.** With
+  `VIDEO_FAST_DELIVERY` on — the default — VP9, AV1 and HEVC are never
+  auto re-encoded, because a large clip costs minutes of CPU while the user
+  watches a progress message. Turn it off to trade promptness for playability;
+  `MAX_TRANSCODE_MB` (80) still caps what will be re-encoded either way.
 - **No retention policy.** Job rows persist until deleted. Add one before
   handling other people's links at scale.
 - **`QueueName.MediaInspect` is declared but unwired.** Inspection runs inline in

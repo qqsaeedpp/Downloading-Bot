@@ -16,7 +16,7 @@ import type {
   TelegramMediaSenderPort,
 } from '@tgtools/feature-downloader';
 import { DownloadError } from '@tgtools/feature-downloader';
-import type { DownloadProgress, DownloadStage } from '@tgtools/shared';
+import type { DownloadProgress, DownloadStage, VideoDeliveryMode } from '@tgtools/shared';
 
 export class FakeQueue implements DownloadQueuePort {
   readonly enqueued: DownloadJobPayload[] = [];
@@ -119,6 +119,9 @@ export interface ScriptedMedia {
   readonly fileSize?: number;
   readonly mimeType?: string;
   readonly fileName?: string;
+  /** Lets a test drive the sender down the document branch without ffprobe. */
+  readonly deliveryMode?: VideoDeliveryMode;
+  readonly transcodeSkippedReason?: string | undefined;
 }
 
 /**
@@ -187,7 +190,19 @@ export class ScriptedDownloader implements MediaDownloaderPort {
       fileName: scripted.fileName ?? 'media.mp4',
       mimeType: scripted.mimeType ?? 'video/mp4',
       fileSize: scripted.fileSize ?? 1_024,
-      video: { width: 720, height: 1280, duration: 27, thumbnailPath: undefined },
+      video: {
+        width: 720,
+        height: 1280,
+        duration: 27,
+        thumbnailPath: undefined,
+        videoCodec: 'h264',
+        audioCodec: 'aac',
+        container: 'mp4',
+      },
+      // The default fake is the ordinary case: already playable, sent as a
+      // video, nothing skipped.
+      deliveryMode: scripted.deliveryMode ?? 'direct-video',
+      transcodeSkippedReason: scripted.transcodeSkippedReason,
       cleanup: () => {
         this.cleanedUp += 1;
         return Promise.resolve();

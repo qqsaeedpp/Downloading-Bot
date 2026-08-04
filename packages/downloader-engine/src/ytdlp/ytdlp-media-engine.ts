@@ -6,6 +6,7 @@ import {
   assertContainedPath,
   createAbortScope,
   describeError,
+  formatBytes,
   redactUrl,
   sanitizeFilename,
   throwIfAborted,
@@ -28,7 +29,8 @@ import { YtDlpErrorMapper } from '../errors/ytdlp-error-mapper.js';
 import type { Ffprobe } from '../media/ffprobe.js';
 import type { ImageNormalizer } from '../media/image-normalizer.js';
 import { mimeTypeForPath } from '../media/mime.js';
-import type { PlaybackNormalizer } from '../media/playback-normalizer.js';
+import { planNormalization } from '../media/playback-normalizer.js';
+import type { NormalizationPlan, PlaybackNormalizer } from '../media/playback-normalizer.js';
 import type { ThumbnailGenerator } from '../media/thumbnail.js';
 import type { PlatformDownloadPolicy } from '../platforms/platform-definition.js';
 import type { PlatformRegistry } from '../platforms/registry.js';
@@ -251,6 +253,7 @@ export class YtDlpMediaEngine implements MediaEngine {
     try {
       await context.onStageChange?.(DownloadStage.Preparing);
       const cookies = await this.options.cookieProvider.getCookies(request.platform);
+      this.#assertEstimatedSizeFits(request);
 
       const producedPath = await withStaleCookieRetry(
         {
@@ -291,6 +294,49 @@ export class YtDlpMediaEngine implements MediaEngine {
       watchdog.stop();
       scope.dispose();
     }
+  }
+
+  /**
+   * The first tier of the size limit: refuse before a single byte is pulled.
+   *
+   * The other two both fire late. `--max-filesize` needs the extractor to have
+   * declared a size up front, and the watchdog only notices once the bytes are
+   * already on disk — after minutes of transfer, and after the user has watched
+   * a progress bar climb towards a file they were never going to receive.
+   * Asking first turns that into an immediate refusal that names the real
+   * reason, instead of a generic "download failed" at the end.
+   *
+   * An unknown estimate must NOT block the download. Instagram and TikTok
+   * declare neither a size nor a bitrate, so no number at all is the normal
+   * case rather than a suspicious one, and the runtime watchdog is the existing
+   * backstop for exactly that. The same rule covers a pre-flight that fails
+   * outright: whatever is wrong with the post will surface from the download
+   * itself, with a better message than anything guessable from here.
+   */
+  #assertEstimatedSizeFits(request: EngineDownloadRequest): void {
+    // Video only. An audio download is re-encoded to the bitrate the user asked
+    // for, so the source rendition's size says little about what lands on disk,
+    // and an image is a single still.
+    if (request.type !== DownloadType.Video) return;
+
+    // Deliberately NOT re-extracting to compute this.
+    //
+    // The number already exists: `listQualityOptions` estimated it to label the
+    // button the user pressed, and it rides along on the request. Asking the
+    // extractor again would double the extraction count of every video job — and
+    // extraction is precisely what YouTube rate-limits and answers with a bot
+    // check, so the pre-flight could fail a download that would have succeeded.
+    // A cheap guard must not be able to cost more than the thing it guards.
+    const estimatedBytes = request.estimatedBytes;
+    const maxBytes = this.options.limits.maxDownloadBytes;
+    if (estimatedBytes === undefined || estimatedBytes <= maxBytes) return;
+
+    throw new EngineError(
+      EngineFailureCode.MediaTooLarge,
+      `The selected rendition is about ${formatBytes(estimatedBytes)}, over the ` +
+        `${formatBytes(maxBytes)} download ceiling`,
+      { context: { estimatedBytes, maxBytes } },
+    );
   }
 
   async probeToolchain(): Promise<ToolchainInfo> {
@@ -464,6 +510,14 @@ export class YtDlpMediaEngine implements MediaEngine {
   ): Promise<EngineDownloadedMedia> {
     let finalPath = producedPath;
     let video: EngineVideoMetadata | undefined;
+    // Audio and images never reach the playback normalizer, so they keep the
+    // plan a missing probe produces: nothing to do, send it as it is. The
+    // sender switches on the download type before it looks at this, so an audio
+    // file is never at risk of being treated as a video because of it.
+    let plan: NormalizationPlan = planNormalization(undefined, 0, {
+      maxTranscodeBytes: this.options.limits.maxDownloadBytes,
+      fastDelivery: false,
+    });
 
     if (request.type === DownloadType.Video) {
       // Normalise BEFORE probing and thumbnailing, so the metadata describes the
@@ -473,6 +527,7 @@ export class YtDlpMediaEngine implements MediaEngine {
         ...(context.onStageChange === undefined ? {} : { onStageChange: context.onStageChange }),
       });
       finalPath = normalized.filePath;
+      plan = normalized.plan;
       const probe = normalized.probe;
       const thumbnailPath = await this.options.thumbnails.generate(
         finalPath,
@@ -487,18 +542,39 @@ export class YtDlpMediaEngine implements MediaEngine {
         height: swapForRotation(probe?.rotationDegrees) ? probe?.width : probe?.height,
         durationSeconds: probe?.durationSeconds,
         thumbnailPath,
+        videoCodec: probe?.videoCodec,
+        audioCodec: probe?.audioCodec,
+        container: probe?.formatName,
       };
     } else if (request.type === DownloadType.Image) {
       finalPath = (await this.options.imageNormalizer.normalize(finalPath, signal)).filePath;
     }
 
     const { size } = await stat(finalPath);
+    // The third tier, and the only one that weighs the file the user actually
+    // gets. The watchdog stopped looking when the download did, and ffmpeg can
+    // hand back something larger than it was given: a re-encode of an already
+    // efficiently-compressed source grows, and even a stream copy pays
+    // container overhead. Failing here is worth more than it costs — the
+    // alternative is handing an undeliverable file onward and discovering the
+    // ceiling from Telegram, after the upload.
+    const maxBytes = this.options.limits.maxDownloadBytes;
+    if (size > maxBytes) {
+      throw new EngineError(
+        EngineFailureCode.MediaTooLarge,
+        `Produced file is ${formatBytes(size)}, over the ${formatBytes(maxBytes)} ceiling`,
+        { context: { fileSize: size, maxBytes } },
+      );
+    }
+
     return {
       filePath: finalPath,
       fileName: buildFileName(finalPath),
       mimeType: mimeTypeForPath(finalPath),
       fileSize: size,
       video,
+      deliveryMode: plan.mode,
+      transcodeSkippedReason: plan.transcodeSkippedReason,
       cleanup: () => workspace.cleanup(),
     };
   }

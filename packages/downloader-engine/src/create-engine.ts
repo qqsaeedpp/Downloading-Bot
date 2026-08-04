@@ -28,6 +28,12 @@ export interface EngineBinaries {
 export interface EngineLimits {
   readonly maxDownloadBytes: number;
   readonly maxTranscodeBytes: number;
+  /**
+   * What the transport can actually deliver. Optional because the engine knows
+   * nothing about Telegram — it only uses this to avoid a re-encode whose output
+   * could not be sent even if it succeeded.
+   */
+  readonly maxUploadBytes?: number | undefined;
   readonly minFreeDiskBytes: number;
   readonly inspectTimeoutMs: number;
   readonly downloadTimeoutMs: number;
@@ -40,6 +46,11 @@ export interface EngineFfmpegSettings {
   readonly audioCodec: string;
   readonly preset: string;
   readonly crf: number;
+  /**
+   * Ship a playable file untouched rather than re-encoding it first. Defaults
+   * to on; see `DeliveryPolicy.fastDelivery` for what that costs and buys.
+   */
+  readonly fastDelivery?: boolean;
 }
 
 export interface CreateEngineOptions {
@@ -99,6 +110,8 @@ export function createDownloaderEngine(options: CreateEngineOptions): EngineBund
       preset: options.ffmpeg.preset,
       crf: options.ffmpeg.crf,
       maxTranscodeBytes: limits.maxTranscodeBytes,
+      maxUploadBytes: limits.maxUploadBytes,
+      fastDelivery: options.ffmpeg.fastDelivery ?? true,
       logger,
     },
     ffprobe,

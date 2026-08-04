@@ -124,7 +124,11 @@ describe('a platform that publishes stills keeps publishing them', () => {
     // The exact user-visible symptom: no buttons at all, and one layer up an
     // "no downloadable content found" error on a post that plainly has content.
     for (const [document, platform, url] of [
-      [TIKTOK_PHOTO_POST, MediaPlatform.TikTok, 'https://www.tiktok.com/@a/photo/7300000000000000001'],
+      [
+        TIKTOK_PHOTO_POST,
+        MediaPlatform.TikTok,
+        'https://www.tiktok.com/@a/photo/7300000000000000001',
+      ],
       [INSTAGRAM_PHOTO_POST, MediaPlatform.Instagram, 'https://www.instagram.com/p/ABC123/'],
       [X_SINGLE_PHOTO_POST, MediaPlatform.X, 'https://x.com/someone/status/1700000000000000003'],
     ] as const) {

@@ -21,6 +21,19 @@ describe('the Persian message table', () => {
     }
   });
 
+  it('never calls a repackaging an optimisation', () => {
+    const packaging = fa.stage(DownloadStage.Packaging);
+    const normalizing = fa.stage(DownloadStage.Normalizing);
+
+    // A stream copy takes seconds; a re-encode takes minutes. Sharing one
+    // wording between them is how a two-second delivery came to look like a
+    // stalled one, so the two must stay distinguishable — and the remux must
+    // not borrow the word that sets an expectation of a long wait.
+    expect(packaging).not.toBe(normalizing);
+    expect(packaging).not.toContain('بهینه‌سازی');
+    expect(normalizing).toContain('بهینه‌سازی');
+  });
+
   it('has a label for every supported platform', () => {
     // Derived from the vocabulary rather than hard-coded, so adding a platform
     // fails here instead of rendering its raw slug to a Persian-speaking user.

@@ -72,13 +72,19 @@ export function createBotContainer(config: AppConfig): BotContainer {
     limits: {
       maxDownloadBytes: config.limits.maxDownloadBytes,
       maxTranscodeBytes: config.limits.maxTranscodeBytes,
+      // Lets the normalizer decline a re-encode whose output could not be
+      // delivered anyway; it is not a download limit.
+      maxUploadBytes: config.limits.maxUploadBytes,
       minFreeDiskBytes: config.storage.minFreeDiskBytes,
       inspectTimeoutMs: config.timeouts.inspectMs,
       downloadTimeoutMs: config.timeouts.downloadMs,
       ffmpegTimeoutMs: config.timeouts.ffmpegMs,
       ffprobeTimeoutMs: config.timeouts.ffprobeMs,
     },
-    ffmpeg: config.ffmpeg,
+    // Kept identical to the worker's: the bot only inspects, but an engine
+    // configured differently between the two processes is how "it listed the
+    // qualities and then refused to download" happens.
+    ffmpeg: { ...config.ffmpeg, fastDelivery: config.limits.videoFastDelivery },
     downloadDirectory: config.storage.downloadDir,
     cookiePaths: config.cookies,
     extraction: config.extraction,

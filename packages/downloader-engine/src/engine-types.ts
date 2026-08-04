@@ -4,6 +4,7 @@ import type {
   DownloadType,
   MediaKind,
   MediaPlatform,
+  VideoDeliveryMode,
 } from '@tgtools/shared';
 
 /**
@@ -82,6 +83,17 @@ export interface EngineDownloadRequest {
   /** `"1080p"` for video, `"192k"` for audio. */
   readonly quality?: string | undefined;
   readonly formatId?: string | undefined;
+  /**
+   * What the quality menu estimated for the rendition the user picked.
+   *
+   * Carried rather than recomputed so the pre-download size check costs nothing.
+   * Re-extracting to find it would double the extraction count of every video
+   * job, on exactly the platforms that rate-limit extraction hardest — a cheap
+   * guard must not be able to cost more than the thing it guards. Absent when
+   * the platform declared no size, which is most of Instagram and TikTok; the
+   * runtime watchdog remains the backstop for those.
+   */
+  readonly estimatedBytes?: number | undefined;
 }
 
 export interface EngineDownloadContext {
@@ -95,6 +107,16 @@ export interface EngineVideoMetadata {
   readonly height: number | undefined;
   readonly durationSeconds: number | undefined;
   readonly thumbnailPath: string | undefined;
+  /**
+   * What ffprobe found in the file that is actually being handed over — not in
+   * whatever yt-dlp downloaded first. These three are the only evidence a bug
+   * report has for "it arrived but would not play", so they travel with the
+   * file rather than being re-derived from a filename downstream.
+   */
+  readonly videoCodec: string | undefined;
+  readonly audioCodec: string | undefined;
+  /** ffprobe's `format_name`, e.g. `mov,mp4,m4a,3gp,3g2,mj2`. */
+  readonly container: string | undefined;
 }
 
 export interface EngineDownloadedMedia {
@@ -103,6 +125,16 @@ export interface EngineDownloadedMedia {
   readonly mimeType: string;
   readonly fileSize: number;
   readonly video: EngineVideoMetadata | undefined;
+  /**
+   * How this file is meant to reach the user.
+   *
+   * Decided here because this is the only layer that has ffprobe's verdict in
+   * hand. Anything further out would have to guess from the extension, and an
+   * `.mp4` says nothing whatsoever about whether Telegram can stream it.
+   */
+  readonly deliveryMode: VideoDeliveryMode;
+  /** Why a re-encode was declined, when one was. For the delivery log. */
+  readonly transcodeSkippedReason: string | undefined;
   /** Removes the whole job workspace. Idempotent; safe to call more than once. */
   cleanup(): Promise<void>;
 }

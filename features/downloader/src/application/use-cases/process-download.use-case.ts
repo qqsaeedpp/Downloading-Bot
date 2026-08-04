@@ -150,6 +150,10 @@ export class ProcessDownloadUseCase {
         caption: deps.buildCaption(job, media),
         type: payload.media.type,
         video: media.video,
+        deliveryMode: media.deliveryMode,
+        transcodeSkippedReason: media.transcodeSkippedReason,
+        jobId: job.id,
+        selectedQuality: payload.media.quality,
         signal: scope.signal,
       });
 
@@ -243,6 +247,7 @@ export class ProcessDownloadUseCase {
         type: payload.media.type,
         quality: payload.media.quality,
         formatId: payload.media.formatId,
+        estimatedBytes: payload.media.estimatedBytes,
       },
       {
         signal,

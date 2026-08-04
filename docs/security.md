@@ -158,15 +158,15 @@ Telegram's `filename` field.
 
 ## 4. Resource exhaustion
 
-| Limit         | Mechanism                                                                                                                                       |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Download size | Two tiers: yt-dlp's `--max-filesize` (fires only when the extractor declared a size) **and** a runtime watchdog polling the workspace every 3 s |
-| Upload size   | Checked before the upload starts, so an undeliverable file fails fast                                                                           |
-| Disk          | `MIN_FREE_DISK_MB` refuses a job rather than filling the volume                                                                                 |
-| CPU           | `MAX_TRANSCODE_MB` — above it, an incompatible codec is remuxed instead of re-encoded                                                           |
-| Time          | Independent budgets for inspect, download, ffmpeg, upload, and the whole job                                                                    |
-| Concurrency   | `MAX_ACTIVE_JOBS_PER_USER` — one user cannot occupy every worker slot                                                                           |
-| Rate          | Fixed-window counters per user, in Redis so the limit holds across replicas                                                                     |
+| Limit         | Mechanism                                                                                                                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Download size | Two tiers: yt-dlp's `--max-filesize` (fires only when the extractor declared a size) **and** a runtime watchdog polling the workspace every 3 s                                      |
+| Upload size   | Checked before the upload starts, so an undeliverable file fails fast                                                                                                                |
+| Disk          | `MIN_FREE_DISK_MB` refuses a job rather than filling the volume                                                                                                                      |
+| CPU           | `MAX_TRANSCODE_MB` (80) — above it, an incompatible codec ships as a document instead of being re-encoded; `VIDEO_FAST_DELIVERY`, on by default, declines that re-encode at any size |
+| Time          | Independent budgets for inspect, download, ffmpeg, upload, and the whole job                                                                                                         |
+| Concurrency   | `MAX_ACTIVE_JOBS_PER_USER` — one user cannot occupy every worker slot                                                                                                                |
+| Rate          | Fixed-window counters per user, in Redis so the limit holds across replicas                                                                                                          |
 
 The runtime watchdog is the important half. `--max-filesize` does nothing when
 the extractor declares no size, which is the normal case for Instagram, TikTok

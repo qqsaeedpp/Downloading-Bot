@@ -61,6 +61,7 @@ export class EngineMediaDownloader implements MediaDownloaderPort {
           type: request.type,
           quality: request.quality,
           formatId: request.formatId,
+          estimatedBytes: request.estimatedBytes,
         },
         {
           signal: context.signal,
@@ -138,7 +139,12 @@ function toDownloadedMedia(media: EngineDownloadedMedia): DownloadedMedia {
             height: media.video.height,
             duration: media.video.durationSeconds,
             thumbnailPath: media.video.thumbnailPath,
+            videoCodec: media.video.videoCodec,
+            audioCodec: media.video.audioCodec,
+            container: media.video.container,
           },
+    deliveryMode: media.deliveryMode,
+    transcodeSkippedReason: media.transcodeSkippedReason,
     cleanup: () => media.cleanup(),
   };
 }

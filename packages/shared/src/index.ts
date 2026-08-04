@@ -30,10 +30,13 @@ export {
   MEDIA_PLATFORM_VALUES,
   MediaKind,
   MediaPlatform,
+  VIDEO_DELIVERY_MODES,
   isDownloadType,
   isMediaPlatform,
 } from './media/vocabulary.js';
-export type { DownloadProgress } from './media/vocabulary.js';
+// `VideoDeliveryMode` is a bare type alias — unlike its neighbours it has no
+// `const` of the same name to merge with, so it cannot ride in the value block.
+export type { DownloadProgress, VideoDeliveryMode } from './media/vocabulary.js';
 
 export { normalizeProgress } from './media/progress.js';
 export type { NormalizedProgress } from './media/progress.js';

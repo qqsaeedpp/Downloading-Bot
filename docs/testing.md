@@ -194,7 +194,7 @@ extractor really produces.
 | `downloader-engine/src/ytdlp/info-mapper.test.ts`         | Extractor document → `EngineMediaInfo`, plus `toIsoDate`.                                                                                                                                                                                                                  |
 | `downloader-engine/src/ytdlp/stale-cookie-retry.test.ts`  | `withStaleCookieRetry`: retries once on a stale-session phrase, never otherwise.                                                                                                                                                                                           |
 | `downloader-engine/src/errors/ytdlp-error-mapper.test.ts` | Message classification, retry disposition, "how the process ended outranks what it printed", output sanitisation, `matchesStaleSession`.                                                                                                                                   |
-| `downloader-engine/src/media/playback-normalizer.test.ts` | `planNormalization` (copy vs remux vs re-encode) and `parseFfprobeOutput`.                                                                                                                                                                                                 |
+| `downloader-engine/src/media/playback-normalizer.test.ts` | `planNormalization` — which of the four delivery modes a probe leads to — and `parseFfprobeOutput`.                                                                                                                                                                        |
 
 ### Unit — `features/`
 

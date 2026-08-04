@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises';
 import type { AppConfig } from '@tgtools/config';
 import type { DatabaseHandle } from '@tgtools/database';
 import { createDatabase } from '@tgtools/database';
@@ -14,7 +15,7 @@ import type { RedisHandle } from '@tgtools/queue';
 import { QueueName, createQueue, createRedis } from '@tgtools/queue';
 import type { Clock, IdGenerator, Logger } from '@tgtools/shared';
 import { CryptoIdGenerator, SystemClock } from '@tgtools/shared';
-import { createTelegramApi } from '@tgtools/telegram';
+import { PUBLIC_BOT_API_ROOT, createTelegramApi } from '@tgtools/telegram';
 import type { Queue } from 'bullmq';
 import type { Api } from 'grammy';
 import { RunningJobRegistry } from './job-registry.js';
@@ -70,13 +71,20 @@ export function createWorkerContainer(config: AppConfig): WorkerContainer {
     limits: {
       maxDownloadBytes: config.limits.maxDownloadBytes,
       maxTranscodeBytes: config.limits.maxTranscodeBytes,
+      // Lets the normalizer decline a re-encode whose output could not be
+      // delivered anyway; it is not a download limit.
+      maxUploadBytes: config.limits.maxUploadBytes,
       minFreeDiskBytes: config.storage.minFreeDiskBytes,
       inspectTimeoutMs: config.timeouts.inspectMs,
       downloadTimeoutMs: config.timeouts.downloadMs,
       ffmpegTimeoutMs: config.timeouts.ffmpegMs,
       ffprobeTimeoutMs: config.timeouts.ffprobeMs,
     },
-    ffmpeg: config.ffmpeg,
+    // `fastDelivery` lives under `limits`, not `ffmpeg`, because it is a policy
+    // about what to spend, not an encoder setting. Spreading it in here is what
+    // makes VIDEO_FAST_DELIVERY=false actually reach the normalizer — without
+    // it the engine fell back to its own `?? true` and the variable was inert.
+    ffmpeg: { ...config.ffmpeg, fastDelivery: config.limits.videoFastDelivery },
     downloadDirectory: config.storage.downloadDir,
     cookiePaths: config.cookies,
     extraction: config.extraction,
@@ -105,6 +113,8 @@ export function createWorkerContainer(config: AppConfig): WorkerContainer {
       logger,
       uploadTimeoutMs: config.timeouts.uploadMs,
       maxUploadBytes: config.limits.maxUploadBytes,
+      apiRoot: config.telegram.apiRoot ?? PUBLIC_BOT_API_ROOT,
+      statFile: (path) => stat(path),
     }),
   });
 

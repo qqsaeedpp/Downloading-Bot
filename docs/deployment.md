@@ -1,7 +1,9 @@
 # Deployment
 
-Production runs as five Compose services: `postgres`, `redis`, a one-shot
-`migrate`, and the two application processes `bot` and `worker`. The bot receives
+Production runs as seven Compose services: `postgres`, `redis`, a one-shot
+`migrate`, the two application processes `bot` and `worker`, and two supporting
+servers — `bgutil-provider` (YouTube PO tokens) and `telegram-bot-api`, the local
+Bot API server that lifts the 50 MB upload ceiling (§7). The bot receives
 updates and queues work; the worker runs yt-dlp, FFmpeg and the upload. They are
 separate images on purpose — the bot image has no writable media volume, so "the
 bot must never download" is a property of the deployment rather than a rule someone
@@ -25,15 +27,28 @@ has to remember.
 cp .env.example .env
 ```
 
-Compose reads `.env` from the project directory automatically. Two variables have
+Compose reads `.env` from the project directory automatically. Four variables have
 no default and fail the `docker compose` command itself if unset:
 
 | Variable             | Why                                                     |
 | -------------------- | ------------------------------------------------------- |
 | `TELEGRAM_BOT_TOKEN` | `${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}` |
 | `POSTGRES_PASSWORD`  | `${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}`   |
+| `TELEGRAM_API_ID`    | demanded by the `telegram-bot-api` service (§7)         |
+| `TELEGRAM_API_HASH`  | demanded by the `telegram-bot-api` service (§7)         |
 
-Everything else in `docker-compose.yml` has a `:-default`.
+The last two are an **application** identity from
+[my.telegram.org](https://my.telegram.org) — not the bot token, and not derivable
+from it. Compose interpolates the whole file before it starts anything, so they are
+required even if you never bring that service up; if you do not want a local Bot API
+server at all, delete the service from `docker-compose.yml`.
+
+Everything else in `docker-compose.yml` has a `:-default`, with two deliberate
+exceptions: `TELEGRAM_UPLOAD_LIMIT_MB` and `MAX_UPLOAD_MB` are written with **no
+value at all**, so they can reach the container genuinely unset. `${…:-}` would
+deliver an empty string, which the schema coerces to `0` and rejects — and any real
+default would be wrong half the time, because the right ceiling depends on whether
+local mode is on (§7).
 
 Two things about `.env.example` that surprise people:
 
@@ -63,16 +78,26 @@ Two things about `.env.example` that surprise people:
 problem is collected and reported at once, and the process throws
 `ConfigurationError` before anything connects. The rules, verbatim in effect:
 
-1. `MAX_UPLOAD_MB > 50` while `TELEGRAM_USE_LOCAL_API` is false → refused. 50 MB is
-   the public Bot API's hard limit; booting with `MAX_UPLOAD_MB=2000` against it
-   would look healthy and then fail every single upload.
-2. `TELEGRAM_USE_LOCAL_API=true` with no `TELEGRAM_API_ROOT` → refused.
-3. `MAX_UPLOAD_MB > MAX_DOWNLOAD_MB` → refused; "nothing could ever grow large
-   enough to use that headroom".
-4. `MAX_TRANSCODE_MB > MAX_DOWNLOAD_MB` → refused.
-5. `DOWNLOAD_JOB_LOCK_DURATION_MS >= JOB_TIMEOUT_MS` → refused, "otherwise a job
+1. `TELEGRAM_LOCAL_MODE` and `TELEGRAM_USE_LOCAL_API` set to **different** values →
+   refused, and likewise `TELEGRAM_UPLOAD_LIMIT_MB` against `MAX_UPLOAD_MB`. Each
+   pair is two spellings of one setting, the second kept so that upgrading does not
+   mean editing a running deployment's `.env`. A disagreement is not resolved by
+   precedence, because that would silently ignore whichever name the operator
+   actually edited — and they would find out when an upload failed.
+2. The upload ceiling above **50** while local mode is off → refused. 50 MB is the
+   public Bot API's hard limit; booting with `TELEGRAM_UPLOAD_LIMIT_MB=1900` against
+   it would look healthy and then fail every single upload.
+3. Local mode on with no `TELEGRAM_API_ROOT` → refused. The API root is the thing
+   that actually redirects the client; the flag on its own moves nothing.
+4. The upload ceiling above `MAX_DOWNLOAD_MB` → refused; "nothing could ever grow
+   large enough to use that headroom". This is why `docker-compose.yml` defaults
+   `MAX_DOWNLOAD_MB` to **2000** rather than the schema's 500: local mode raises the
+   upload ceiling to 1900, and a 500 MB download ceiling would then make "enable
+   local mode" produce a stack that refuses to boot.
+5. `MAX_TRANSCODE_MB > MAX_DOWNLOAD_MB` → refused.
+6. `DOWNLOAD_JOB_LOCK_DURATION_MS >= JOB_TIMEOUT_MS` → refused, "otherwise a job
    can never be reclaimed after a worker dies".
-6. `DOWNLOAD_TIMEOUT_MS + FFMPEG_TIMEOUT_MS + TELEGRAM_UPLOAD_TIMEOUT_MS > JOB_TIMEOUT_MS`
+7. `DOWNLOAD_TIMEOUT_MS + FFMPEG_TIMEOUT_MS + TELEGRAM_UPLOAD_TIMEOUT_MS > JOB_TIMEOUT_MS`
    → refused. The job would be killed before its slowest legal path completes. The
    shipped defaults sum to 2 700 000 ms against a 3 600 000 ms budget.
 
@@ -108,7 +133,9 @@ docker compose ps
 ```
 
 Expected steady state: `postgres` and `redis` healthy, `migrate` exited 0, `bot`
-and `worker` running and healthy.
+and `worker` running and healthy, `bgutil-provider` healthy, and `telegram-bot-api`
+running with no health status at all — it carries no healthcheck, for the reasons
+in §7.
 
 > **Build every service, not a subset.** `docker compose build bot worker`
 > looks complete and is not: `migrate` is a separate service, so it keeps
@@ -366,31 +393,93 @@ never a `Bot`.)
 ## 7. The 50 MB ceiling and a local Bot API server
 
 Telegram's public Bot API refuses any upload over 50 MB, whatever you configure.
-`PUBLIC_API_UPLOAD_LIMIT_MB = 50` in `packages/config/src/load-config.ts` and rule 1
-of `assertCoherent` enforces it.
+`PUBLIC_API_UPLOAD_LIMIT_MB = 50` in `packages/config/src/load-config.ts` and rule 2
+of `assertCoherent` enforce it.
 
-`MAX_DOWNLOAD_MB` and `MAX_UPLOAD_MB` are deliberately separate numbers: a file can
+The download and upload ceilings are deliberately separate numbers: a file can
 download fine and still be undeliverable. When that happens,
 `ProcessDownloadUseCase.#assertDeliverable` catches it _before_ spending minutes
 streaming to Telegram and fails the job with `MEDIA_TOO_LARGE`.
 
-To lift the ceiling to 2000 MB, run your own
-[telegram-bot-api](https://github.com/tdlib/telegram-bot-api) server. Add it to
-`docker-compose.yml` on the `internal` network, then set:
+### The service
+
+`docker-compose.yml` ships a `telegram-bot-api` service — `aiogram/telegram-bot-api`,
+the maintained community build of
+[tdlib/telegram-bot-api](https://github.com/tdlib/telegram-bot-api), which publishes
+source but no image of its own. It runs with `TELEGRAM_LOCAL=1` (the `--local` flag
+is the entire point; without it the server is a private relay that still refuses
+anything over 50 MB), sits on the `internal` network, and is reachable as
+`telegram-bot-api:8081` and nowhere else. The port is deliberately **not** published:
+it carries a bot token in the URL path and authenticates nothing itself.
+
+It needs `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` (§1) and keeps its TDLib session
+in the `telegram-bot-api-data` volume; deleting that volume costs every bot a fresh
+authorisation on the next start. There is no healthcheck, and nothing `depends_on`
+it — the image has no curl, wget or interpreter to probe with, and the only endpoint
+it answers is `/bot<token>/<method>`, so any check would either be a guess that
+reports a working server as `(unhealthy)` forever or would print the bot token into
+`docker inspect`.
+
+### Enabling it
+
+Running the container changes nothing on its own. The bot and worker keep talking to
+`api.telegram.org` until `.env` redirects them:
 
 ```
 TELEGRAM_API_ROOT=http://telegram-bot-api:8081
-TELEGRAM_USE_LOCAL_API=true
-MAX_UPLOAD_MB=2000
-MAX_DOWNLOAD_MB=2000     # must be >= MAX_UPLOAD_MB
-MAX_TRANSCODE_MB=2000    # must be <= MAX_DOWNLOAD_MB
+TELEGRAM_LOCAL_MODE=true
 ```
 
-`TELEGRAM_API_ROOT` is threaded into both `createBot` and `createTelegramApi` as
-grammY's `apiRoot`; an empty value means the public API. The schema caps
-`MAX_UPLOAD_MB` at 2000. Note that `useLocalApi` is currently only used for the
-coherence rule and a debug log line — the code path still uploads via multipart
-`InputFile`, so the local server needs no shared-volume access to work.
+That is the whole change. Two things are already handled for you:
+
+- **The upload ceiling needs no entry.** `TELEGRAM_UPLOAD_LIMIT_MB` has no default in
+  the schema, because the right one depends on this flag: it becomes **1900 MB** with
+  local mode on and **50 MB** without it. Set it explicitly only to go lower.
+- **`MAX_DOWNLOAD_MB` needs no entry either.** Compose already defaults it to 2000,
+  precisely so that rule 4 of `assertCoherent` is satisfied the moment local mode
+  turns on.
+
+`TELEGRAM_UPLOAD_LIMIT_MB` is the documented name and `MAX_UPLOAD_MB` the older
+spelling of the same setting; `TELEGRAM_LOCAL_MODE` and `TELEGRAM_USE_LOCAL_API` are
+the same pair for the flag. Setting both members of a pair to different values is
+refused at startup (rule 1). Going back to the public API means the reverse: empty
+`TELEGRAM_API_ROOT`, both flags false, and both ceilings 50.
+
+### Why 1900 and not 2000
+
+The schema caps both spellings of the upload ceiling at **1900**, not at the 2000 the
+server advertises. The server measures its limit on the **encoded multipart body**,
+which is larger than the file inside it, so a ceiling set at exactly 2000 gets the
+request refused after the whole file has been streamed — the most expensive possible
+moment to discover it. The 100 MB of headroom pays for the encoding overhead.
+
+### What the local server does not change
+
+`MAX_TRANSCODE_MB` stays at its default of **80**, and raising the upload ceiling is
+no reason to raise it. It is the size above which an incompatible codec ships as a
+document instead of being re-encoded, and that number is set by how long a person
+will wait rather than by what the host can survive: a 250 MB VP9 clip is minutes of
+CPU during which the user sees a progress message and no file. `VIDEO_FAST_DELIVERY`
+(default **true**) is the same trade made absolutely — with it on, an incompatible
+codec is never auto re-encoded at all; the original goes out as a document
+immediately. A bigger ceiling means bigger files can be _delivered_, not that more of
+them get re-encoded.
+
+### How the client is pointed at it
+
+Both processes build their Telegram client through one shared factory,
+`packages/telegram/src/bot-factory.ts` — `createBot` for the bot, `createTelegramApi`
+for the worker, both resolving the URL through `resolveApiRoot`. They share it
+because the two processes disagreeing about where Telegram lives produces the worst
+symptom in this system: the bot offers qualities the worker then cannot deliver.
+
+A local server is selected by `apiRoot` and **nothing else**; an empty value means
+the public API. grammY also has an `environment` option, and it is never set here on
+purpose — it accepts only `prod` and `test`, so anything resembling "local" would be
+rejected. The two look interchangeable, which is exactly why it is written down.
+
+Uploads still go over multipart `InputFile`, so the local server needs no
+shared-volume access to work.
 
 ## 8. Updating yt-dlp
 
@@ -519,7 +608,9 @@ To ship logs elsewhere, replace the `x-logging` anchor with your driver of choic
 | Worker healthy, jobs queue but never run                                                                                                       | Bot and worker on different Redis instances, or the worker is paused mid-shutdown. Check `download worker started` in the worker log.                                                                                     |
 | `job stalled` warnings, files downloaded twice                                                                                                 | `DOWNLOAD_JOB_LOCK_DURATION_MS` too low for a single download step. BullMQ renews at half the duration but only while the processor yields.                                                                               |
 | Jobs die at ~60 s under load with no error                                                                                                     | `DOWNLOAD_JOB_LOCK_DURATION_MS` at its 60 000 ms floor against long FFmpeg runs. Raise it (it must stay below `JOB_TIMEOUT_MS`).                                                                                          |
-| Every download fails `MEDIA_TOO_LARGE` at the end                                                                                              | `MAX_UPLOAD_MB` is below what the chosen quality produces. Either lower the offered quality ceiling via `MAX_DOWNLOAD_MB` or run a local Bot API server (§7).                                                             |
+| Every download fails `MEDIA_TOO_LARGE` at the end                                                                                              | The upload ceiling — 50 MB unless local mode is on — is below what the chosen quality produces. Either lower the offered quality ceiling via `MAX_DOWNLOAD_MB` or enable the local Bot API server (§7).                   |
+| `docker compose up` fails immediately with `TELEGRAM_API_ID is required by the telegram-bot-api service`                                       | The application identity from my.telegram.org is missing from `.env` (§1). It is demanded even when you do not intend to run that service, because Compose interpolates the whole file.                                   |
+| `ConfigurationError: … are two spellings of the same setting and disagree`                                                                     | Both names of an aliased pair are set to different values — `TELEGRAM_LOCAL_MODE`/`TELEGRAM_USE_LOCAL_API`, or `TELEGRAM_UPLOAD_LIMIT_MB`/`MAX_UPLOAD_MB`. Make them identical, or remove one (§7).                       |
 | `INSUFFICIENT_STORAGE` before anything downloads                                                                                               | The `downloads` volume has less than `MIN_FREE_DISK_MB` free. `assertSpaceAvailable` declines up front rather than filling the disk.                                                                                      |
 | Disk creeps up over days                                                                                                                       | Orphan sweep not running, or `ORPHAN_WORKSPACE_MAX_AGE_HOURS` too high. The maintenance loop runs every `MAINTENANCE_INTERVAL_MS` and once at startup; look for `removed orphaned workspace`.                             |
 | Log line: _"authenticated attempt failed in a way that suggests an expired session; retrying anonymously — refresh this platform cookie file"_ | Exactly what it says. The retry rescued the link; the cookie file is stale.                                                                                                                                               |

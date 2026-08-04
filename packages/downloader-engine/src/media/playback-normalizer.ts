@@ -1,6 +1,7 @@
 import { rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 import { DownloadStage } from '@tgtools/shared';
+import type { VideoDeliveryMode } from '@tgtools/shared';
 import type { Logger } from '@tgtools/shared';
 import { describeError, formatBytes } from '@tgtools/shared';
 import { runProcess } from '../process/run-process.js';
@@ -13,7 +14,16 @@ import type { Ffprobe, ProbedMedia } from './ffprobe.js';
  * exists.
  */
 const SAFE_VIDEO_CODEC = 'h264';
-const SAFE_AUDIO_CODECS = new Set(['aac', 'mp3']);
+/**
+ * AAC only.
+ *
+ * MP3 inside MP4 is legal and most clients cope, but "most" is the problem: the
+ * pass that fixes it copies the video stream untouched and only re-encodes
+ * sound, which is cheap and bounded even on a 1.5 GB file. Paying that to
+ * guarantee playback is a better trade than shipping something that plays
+ * everywhere except on the one device the user has.
+ */
+const SAFE_AUDIO_CODECS = new Set(['aac']);
 
 export interface NormalizerConfig {
   readonly ffmpegPath: string;
@@ -22,20 +32,45 @@ export interface NormalizerConfig {
   readonly audioCodec: string;
   readonly preset: string;
   readonly crf: number;
-  /** Above this size a bad codec is remuxed rather than re-encoded. */
+  /** Above this size a bad codec ships as-is rather than being re-encoded. */
   readonly maxTranscodeBytes: number;
+  /** See {@link DeliveryPolicy.fastDelivery}. */
+  readonly fastDelivery: boolean;
+  /** See {@link DeliveryPolicy.maxUploadBytes}. */
+  readonly maxUploadBytes?: number | undefined;
   readonly logger: Logger;
 }
 
-export type NormalizationAction =
-  'none' | 'remux' | 'transcode-video' | 'transcode-audio' | 'transcode-both';
-
 export interface NormalizationPlan {
-  readonly action: NormalizationAction;
+  readonly mode: VideoDeliveryMode;
   readonly reencodeVideo: boolean;
   readonly reencodeAudio: boolean;
   readonly reason: string;
+  /** Why a re-encode was declined, when one was. For the delivery log. */
+  readonly transcodeSkippedReason: string | undefined;
 }
+
+/**
+ * Containers Telegram accepts without repackaging.
+ *
+ * ffprobe reports the MP4 family as one comma-separated list —
+ * `mov,mp4,m4a,3gp,3g2,mj2` — so this is a substring test rather than equality.
+ */
+const DELIVERABLE_CONTAINERS = ['mp4', 'mov'];
+
+function containerIsDeliverable(formatName: string | undefined): boolean {
+  if (formatName === undefined) return false;
+  const parts = formatName.toLowerCase().split(',');
+  return parts.some((part) => DELIVERABLE_CONTAINERS.includes(part.trim()));
+}
+
+/**
+ * Resolutions where a re-encode stops being worth its wall-clock cost.
+ *
+ * Not a quality judgement: a 4K re-encode measures in minutes per clip, and the
+ * person waiting would rather have the original now.
+ */
+const HEAVY_HEIGHT = 1440;
 
 export interface NormalizationResult {
   readonly filePath: string;
@@ -50,68 +85,142 @@ export interface NormalizationResult {
  * judgement calls live: `--merge-output-format mp4` only ever sets the
  * CONTAINER, so an MP4 is not remotely the same thing as a playable file.
  */
+export interface DeliveryPolicy {
+  /** Above this, an incompatible codec ships as-is rather than being re-encoded. */
+  readonly maxTranscodeBytes: number;
+  /**
+   * Prefer arriving promptly over arriving perfect.
+   *
+   * With this on, an incompatible codec is never re-encoded: the original goes
+   * out as a document immediately. Off, the size and resolution ceilings still
+   * apply — they are absolute, not preferences.
+   */
+  readonly fastDelivery: boolean;
+  /**
+   * The ceiling the finished file has to fit under to be sendable at all.
+   *
+   * Checked here because a re-encode that cannot possibly be delivered is worse
+   * than no re-encode: it costs minutes of CPU and then fails at the upload,
+   * where the original would at least have arrived as a document.
+   *
+   * Optional so a caller that genuinely has no ceiling can omit it.
+   */
+  readonly maxUploadBytes?: number | undefined;
+}
+
+/**
+ * A rough floor for what a re-encode will produce.
+ *
+ * H.264 at CRF 23 lands well under half the size of the VP9/AV1 source it
+ * replaces in the common case, but "well under" is not a guarantee, and the
+ * only cheap protection against spending nine minutes on an undeliverable file
+ * is to refuse when even a generous estimate does not fit.
+ */
+const TRANSCODE_SIZE_RATIO = 0.6;
+
 export function planNormalization(
   probe: ProbedMedia | undefined,
   fileSizeBytes: number,
-  maxTranscodeBytes: number,
+  policy: DeliveryPolicy,
 ): NormalizationPlan {
+  const nothingToDo = (reason: string): NormalizationPlan => ({
+    mode: 'direct-video',
+    reencodeVideo: false,
+    reencodeAudio: false,
+    reason,
+    transcodeSkippedReason: undefined,
+  });
+
+  // Audio-only downloads and images land here, as does a probe that failed. In
+  // every case there is no video decision to make.
   if (probe?.videoCodec === undefined) {
-    return {
-      action: 'none',
-      reencodeVideo: false,
-      reencodeAudio: false,
-      reason: 'not a video, or the probe failed — leave the file alone',
-    };
-  }
-
-  let reencodeVideo = probe.videoCodec !== SAFE_VIDEO_CODEC;
-
-  // Re-encoding is priced per pixel: a 2.5-minute 4K clip measures around nine
-  // minutes on four cores. Past a point the cost outweighs the benefit — a file
-  // that large is being watched on a desktop, where VP9 and AV1 play fine — so
-  // above the threshold we only remux, which still fixes the moov position.
-  let sizeCapped = false;
-  if (reencodeVideo && fileSizeBytes > maxTranscodeBytes) {
-    reencodeVideo = false;
-    sizeCapped = true;
+    return nothingToDo('not a video, or the probe failed — leave the file alone');
   }
 
   // 10-bit and 4:2:2 content is rejected by older hardware decoders even when
-  // the codec itself is H.264, so the pixel format is part of the decision.
+  // the codec itself is H.264, so the pixel format is part of "is this safe".
   const pixelFormatIsSafe =
     probe.pixelFormat === undefined ||
     probe.pixelFormat === 'yuv420p' ||
     probe.pixelFormat === 'yuvj420p';
-  if (!reencodeVideo && !sizeCapped && !pixelFormatIsSafe) reencodeVideo = true;
+  const videoIsSafe = probe.videoCodec === SAFE_VIDEO_CODEC && pixelFormatIsSafe;
+  const audioIsSafe = probe.audioCodec === undefined || SAFE_AUDIO_CODECS.has(probe.audioCodec);
 
-  const reencodeAudio = probe.audioCodec !== undefined && !SAFE_AUDIO_CODECS.has(probe.audioCodec);
+  if (videoIsSafe && audioIsSafe) {
+    // MODE 1. Nothing to gain from ffmpeg, so it is not run.
+    //
+    // The cost of that choice, stated plainly: a progressive download never ran
+    // the merger and so never got `+faststart`, leaving its moov atom at the end
+    // of the file. A player may therefore buffer further before starting. That
+    // is a slower FIRST FRAME, once — against a remux of the whole file, every
+    // time, for a file that already plays. Delivery speed wins.
+    if (containerIsDeliverable(probe.formatName)) {
+      return nothingToDo('H.264/AAC already in an MP4 container — sent untouched');
+    }
 
-  if (!reencodeVideo && !reencodeAudio) {
+    // MODE 2. Right streams, wrong box. Copy them across; decode nothing.
     return {
-      action: 'remux',
+      mode: 'remux-video',
       reencodeVideo: false,
       reencodeAudio: false,
-      // A single progressive download never runs the merger, so it never picked
-      // up `+faststart` either: its moov atom sits at the end of the file and
-      // players stall before they can start.
-      reason: sizeCapped
-        ? `codec is not ideal but the file exceeds the ${formatBytes(maxTranscodeBytes)} transcode ceiling; remuxing only`
-        : 'codecs are already safe; remux to guarantee faststart',
+      reason: `H.264/AAC in ${probe.formatName ?? 'an unknown container'} — stream copy to MP4`,
+      transcodeSkippedReason: undefined,
     };
   }
 
-  const action: NormalizationAction =
-    reencodeVideo && reencodeAudio
-      ? 'transcode-both'
-      : reencodeVideo
-        ? 'transcode-video'
-        : 'transcode-audio';
+  // A bad soundtrack on good video is cheap to fix — audio is not priced per
+  // pixel — so it is never deferred to a document. The video is still copied.
+  if (videoIsSafe && !audioIsSafe) {
+    return {
+      mode: 'transcode-video',
+      reencodeVideo: false,
+      reencodeAudio: true,
+      reason: `audio is ${probe.audioCodec ?? 'unknown'}; re-encoding sound only, video copied`,
+      transcodeSkippedReason: undefined,
+    };
+  }
 
+  // MODE 3 vs 4. The video itself needs re-encoding, which is the expensive one:
+  // a 2.5-minute 4K clip measures around nine minutes on four cores. Each of
+  // these says "not worth it" for a different reason, and all are reported.
+  const skip: string[] = [];
+  if (policy.fastDelivery) skip.push('VIDEO_FAST_DELIVERY is on');
+  if (fileSizeBytes > policy.maxTranscodeBytes) {
+    skip.push(
+      `file is ${formatBytes(fileSizeBytes)}, over the ` +
+        `${formatBytes(policy.maxTranscodeBytes)} transcode ceiling`,
+    );
+  }
+  if (probe.height !== undefined && probe.height >= HEAVY_HEIGHT) {
+    skip.push(`${String(probe.height)}p is too tall to re-encode within a sensible wait`);
+  }
+  if (
+    policy.maxUploadBytes !== undefined &&
+    fileSizeBytes * TRANSCODE_SIZE_RATIO > policy.maxUploadBytes
+  ) {
+    skip.push(
+      `even a re-encode would likely exceed the ${formatBytes(policy.maxUploadBytes)} upload ceiling`,
+    );
+  }
+
+  if (skip.length > 0) {
+    return {
+      mode: 'direct-document',
+      reencodeVideo: false,
+      reencodeAudio: false,
+      reason: `${probe.videoCodec} cannot stream in Telegram; delivering the original as a file`,
+      transcodeSkippedReason: skip.join('; '),
+    };
+  }
+
+  // MODE 4. Small enough, short enough, and the operator asked for compatibility
+  // over speed.
   return {
-    action,
-    reencodeVideo,
-    reencodeAudio,
+    mode: 'transcode-video',
+    reencodeVideo: true,
+    reencodeAudio: !audioIsSafe,
     reason: `video=${probe.videoCodec} audio=${probe.audioCodec ?? 'none'} pix_fmt=${probe.pixelFormat ?? 'unknown'}`,
+    transcodeSkippedReason: undefined,
   };
 }
 
@@ -136,13 +245,27 @@ export class PlaybackNormalizer {
   ): Promise<NormalizationResult> {
     const probe = await this.ffprobe.probe(filePath, options.signal);
     const { size } = await stat(filePath);
-    const plan = planNormalization(probe, size, this.config.maxTranscodeBytes);
+    const plan = planNormalization(probe, size, {
+      maxTranscodeBytes: this.config.maxTranscodeBytes,
+      fastDelivery: this.config.fastDelivery,
+      maxUploadBytes: this.config.maxUploadBytes,
+    });
 
-    if (plan.action === 'none') return { filePath, plan, probe };
-
-    if (plan.reencodeVideo || plan.reencodeAudio) {
-      await options.onStageChange?.(DownloadStage.Normalizing);
+    // Both direct modes are defined by running no ffmpeg at all, so they leave
+    // here before a single stage is announced. That silence is the feature: the
+    // file is ready, and saying "optimising" about a file nobody is optimising
+    // is how a two-second delivery came to look like a stalled one.
+    if (plan.mode === 'direct-video' || plan.mode === 'direct-document') {
+      return { filePath, plan, probe };
     }
+
+    // A re-encode can run for minutes and a stream copy for seconds. Naming them
+    // differently is the whole reason `Packaging` exists.
+    await options.onStageChange?.(
+      plan.reencodeVideo || plan.reencodeAudio
+        ? DownloadStage.Normalizing
+        : DownloadStage.Packaging,
+    );
 
     const directory = dirname(filePath);
     const stem = basename(filePath, extname(filePath));
@@ -157,8 +280,12 @@ export class PlaybackNormalizer {
       '-y',
       '-i',
       filePath,
+      // The video map is mandatory, the audio map optional. A file that reached
+      // this path has a video stream by definition, so a missing one means the
+      // input is not what the probe said — better to fail here, loudly, than to
+      // emit a silent audio-only "video".
       '-map',
-      '0:v:0?',
+      '0:v:0',
       '-map',
       '0:a:0?',
       '-c:v',
@@ -200,7 +327,7 @@ export class PlaybackNormalizer {
       await rm(filePath, { force: true });
       await rename(scratch, target);
       this.config.logger.debug('normalised media for playback', {
-        action: plan.action,
+        deliveryMode: plan.mode,
         reason: plan.reason,
       });
       return { filePath: target, plan, probe: await this.ffprobe.probe(target, options.signal) };
@@ -209,7 +336,7 @@ export class PlaybackNormalizer {
         // The scratch file may never have been created; nothing to report.
       });
       this.config.logger.warn('normalisation failed; delivering the original file', {
-        action: plan.action,
+        deliveryMode: plan.mode,
         error: describeError(error),
       });
       return { filePath, plan, probe };

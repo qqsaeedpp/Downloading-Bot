@@ -106,7 +106,11 @@ export type {
 export { Ffprobe, parseFfprobeOutput } from './media/ffprobe.js';
 export type { ProbedMedia } from './media/ffprobe.js';
 export { PlaybackNormalizer, planNormalization } from './media/playback-normalizer.js';
-export type { NormalizationPlan, NormalizationResult } from './media/playback-normalizer.js';
+export type {
+  DeliveryPolicy,
+  NormalizationPlan,
+  NormalizationResult,
+} from './media/playback-normalizer.js';
 export { ThumbnailGenerator, pickSeekPoint } from './media/thumbnail.js';
 export { ImageNormalizer } from './media/image-normalizer.js';
 export {

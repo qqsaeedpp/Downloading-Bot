@@ -69,10 +69,39 @@ export type MediaKind = (typeof MediaKind)[keyof typeof MediaKind];
 export const DownloadStage = {
   Preparing: 'preparing',
   Downloading: 'downloading',
+  /**
+   * Repackaging only — a stream copy, no decoding. Seconds, not minutes.
+   *
+   * Separate from {@link DownloadStage.Normalizing} because the two feel nothing
+   * alike to the person waiting, and calling a two-second remux an
+   * "optimisation" invites them to expect the multi-minute kind.
+   */
+  Packaging: 'packaging',
+  /** A real re-encode. The only stage here that can take minutes. */
   Normalizing: 'normalizing',
   Uploading: 'uploading',
 } as const;
 export type DownloadStage = (typeof DownloadStage)[keyof typeof DownloadStage];
+
+/**
+ * How a finished file is meant to reach the user.
+ *
+ * Lives here rather than in the engine because three layers need to agree on it:
+ * the engine decides it from ffprobe, the sender switches on it, and the domain
+ * carries it between them. The names describe DELIVERY, not the ffmpeg work —
+ * `transcode-video` covers the cheap audio-only re-encode too.
+ */
+export const VIDEO_DELIVERY_MODES = [
+  /** Already playable. No ffmpeg at all. */
+  'direct-video',
+  /** Right codecs, wrong container. Stream copy; no pixels are touched. */
+  'remux-video',
+  /** A codec Telegram cannot stream, not worth re-encoding. Sent as a file. */
+  'direct-document',
+  /** Re-encoded, then sent as a video. */
+  'transcode-video',
+] as const;
+export type VideoDeliveryMode = (typeof VIDEO_DELIVERY_MODES)[number];
 
 /**
  * A progress sample. Every field but `downloadedBytes` is optional on purpose:

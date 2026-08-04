@@ -1,4 +1,10 @@
-import type { DownloadProgress, DownloadStage, DownloadType, MediaPlatform } from '@tgtools/shared';
+import type {
+  DownloadProgress,
+  DownloadStage,
+  DownloadType,
+  MediaPlatform,
+  VideoDeliveryMode,
+} from '@tgtools/shared';
 import type { MediaInfo } from '../entities/media-info.js';
 import type { DownloadFailureCode } from '../errors/download-failure-code.js';
 
@@ -52,6 +58,12 @@ export interface DownloadJobPayload {
     readonly type: DownloadType;
     readonly quality: string | undefined;
     readonly formatId: string | undefined;
+    /**
+     * What the chosen rendition was advertised to weigh. Advisory: absent for
+     * extractors that report no size, and for jobs enqueued by an older
+     * release, neither of which is a reason to refuse the job.
+     */
+    readonly estimatedBytes?: number | undefined;
   };
 }
 
@@ -97,8 +109,26 @@ export interface SendMediaCommand {
         readonly height: number | undefined;
         readonly duration: number | undefined;
         readonly thumbnailPath: string | undefined;
+        readonly videoCodec: string | undefined;
+        readonly audioCodec: string | undefined;
+        readonly container: string | undefined;
       }
     | undefined;
+  /**
+   * How the engine decided this file should arrive.
+   *
+   * `direct-document` is the one that changes behaviour at the sender: it means
+   * ffprobe already established that Telegram cannot stream this codec, so
+   * attempting `sendVideo` first would upload the whole file — up to 1.9 GB —
+   * only to be told what was already known.
+   */
+  readonly deliveryMode: VideoDeliveryMode;
+  /** Why a re-encode was declined, when one was. Logged, never shown. */
+  readonly transcodeSkippedReason?: string | undefined;
+  /** Correlates the delivery log line with the job that produced it. */
+  readonly jobId?: string | undefined;
+  /** The label the user pressed, e.g. `1080p`. Logged, not re-rendered. */
+  readonly selectedQuality?: string | undefined;
   readonly signal?: AbortSignal | undefined;
 }
 

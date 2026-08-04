@@ -153,7 +153,10 @@ export function createDownloaderFeature(
       minPercentDelta: config.progress.minPercentDelta,
     },
     buildCaption: (job, media) =>
-      fa.deliveredCaption(job.mediaTitle ?? media.fileName, job.requestedQuality),
+      fa.deliveredCaption(job.mediaTitle ?? media.fileName, job.requestedQuality, {
+        // A video arriving as a plain file reads as a failure unless it says why.
+        asDocument: media.deliveryMode === 'direct-document',
+      }),
   });
 
   const composer = new Composer<AppContext>();

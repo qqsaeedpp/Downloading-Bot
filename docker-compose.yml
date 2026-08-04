@@ -15,7 +15,13 @@ x-app-env: &app-env
   LOG_PRETTY: ${LOG_PRETTY:-false}
   TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
   TELEGRAM_API_ROOT: ${TELEGRAM_API_ROOT:-}
-  TELEGRAM_USE_LOCAL_API: ${TELEGRAM_USE_LOCAL_API:-false}
+  # Point TELEGRAM_API_ROOT at the `telegram-bot-api` service below and set this
+  # true to lift the 50 MB upload ceiling. TELEGRAM_USE_LOCAL_API is the older
+  # spelling of the same switch, kept so an existing .env keeps working; set
+  # both to the SAME value, because two different answers to one question are
+  # refused rather than silently resolved.
+  TELEGRAM_LOCAL_MODE: ${TELEGRAM_LOCAL_MODE:-}
+  TELEGRAM_USE_LOCAL_API:
   # Composed from POSTGRES_* and the service names — any DATABASE_URL in .env is
   # deliberately ignored here, because inside this network the host is always
   # `postgres` and a stale localhost URL from a developer's .env would fail in a
@@ -26,9 +32,32 @@ x-app-env: &app-env
   QUEUE_REMOVE_COMPLETE_AFTER_SECONDS: ${QUEUE_REMOVE_COMPLETE_AFTER_SECONDS:-3600}
   QUEUE_REMOVE_FAIL_AFTER_SECONDS: ${QUEUE_REMOVE_FAIL_AFTER_SECONDS:-604800}
   DOWNLOAD_DIR: /data/downloads
-  MAX_DOWNLOAD_MB: ${MAX_DOWNLOAD_MB:-500}
-  MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
-  MAX_TRANSCODE_MB: ${MAX_TRANSCODE_MB:-250}
+  # 2000, not 500. With TELEGRAM_LOCAL_MODE=true the upload ceiling becomes
+  # 1900 MB, and the config's coherence rule refuses to start when the
+  # download ceiling sits below it — so a 500 default turned "enable local
+  # mode" into a container that would not boot.
+  MAX_DOWNLOAD_MB: ${MAX_DOWNLOAD_MB:-2000}
+  # The documented name for MAX_UPLOAD_MB below, and the one variable here
+  # written with NO value. It has to be able to arrive genuinely unset, because
+  # the right ceiling depends on local mode — 50 against the public API, 1900
+  # against your own server — and `${...:-}` would deliver an empty string,
+  # which the schema coerces to 0 and rejects for being below its `>= 1` bound.
+  # With no value Compose resolves it from .env and drops it from the
+  # container's environment entirely when it is not set there.
+  TELEGRAM_UPLOAD_LIMIT_MB:
+  # Same no-value form, and for the same reason: a `${...:-50}` default would
+  # arrive SET on every deployment, so a local-mode stack would be declaring 50
+  # here and 1900 above — two different answers to one question, which startup
+  # refuses rather than silently resolves.
+  MAX_UPLOAD_MB:
+  # Above this an incompatible codec ships as a document rather than being
+  # re-encoded. Set by how long a person will wait, not by what the host can
+  # survive.
+  MAX_TRANSCODE_MB: ${MAX_TRANSCODE_MB:-80}
+  # Deliver a playable file as it is rather than spending minutes re-encoding
+  # it: a 4K AV1 clip transcodes for longer than most users will wait, and
+  # arriving promptly as a document is the better trade.
+  VIDEO_FAST_DELIVERY: ${VIDEO_FAST_DELIVERY:-true}
   MIN_FREE_DISK_MB: ${MIN_FREE_DISK_MB:-2048}
   MEDIA_INSPECT_TIMEOUT_MS: ${MEDIA_INSPECT_TIMEOUT_MS:-30000}
   DOWNLOAD_TIMEOUT_MS: ${DOWNLOAD_TIMEOUT_MS:-900000}
@@ -148,6 +177,64 @@ services:
       start_period: 20s
     networks: [internal]
 
+  # Your own Bot API server. This is the only way past the 50 MB upload limit.
+  #
+  # That limit is a property of Telegram's PUBLIC endpoint, not of the token, so
+  # no configuration on our side can raise it — and 50 MB is smaller than most
+  # videos worth downloading. A server you run yourself accepts up to 2000 MB,
+  # of which this stack uses 1900: the 2000 is measured on the encoded multipart
+  # body, so a ceiling set at exactly 2000 fails at the end of a long upload.
+  #
+  # `aiogram/telegram-bot-api` is the maintained community build of
+  # tdlib/telegram-bot-api, which ships source but no image of its own.
+  #
+  # Running the container changes nothing by itself: the bot and worker keep
+  # talking to api.telegram.org until .env redirects them (see .env.example):
+  #   TELEGRAM_API_ROOT=http://telegram-bot-api:8081
+  #   TELEGRAM_LOCAL_MODE=true
+  #   TELEGRAM_UPLOAD_LIMIT_MB=1900
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:${TELEGRAM_BOT_API_VERSION:-latest}
+    restart: unless-stopped
+    logging: *logging
+    init: true
+    environment:
+      # An APPLICATION identity from https://my.telegram.org, not the bot token
+      # and not derivable from it. The server exits at once without both, so
+      # they are demanded here — a missing value should stop a deploy, not
+      # produce a container that restarts forever.
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:?TELEGRAM_API_ID is required by the telegram-bot-api service. Create an application at https://my.telegram.org (API development tools). This is NOT your bot token}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:?TELEGRAM_API_HASH is required by the telegram-bot-api service. Create an application at https://my.telegram.org (API development tools). This is NOT your bot token}
+      # `--local`. The entire point of the service: without it the server is a
+      # private relay that still refuses anything over 50 MB.
+      TELEGRAM_LOCAL: 1
+    # Reachable as `telegram-bot-api:8081` from this network and nowhere else.
+    # Deliberately NOT published: the port carries a bot token in the URL path
+    # and authenticates nothing itself.
+    expose:
+      - "8081"
+    # TDLib session and per-bot state. Deleting it costs every bot a fresh
+    # authorisation on the next start.
+    volumes:
+      - telegram-bot-api-data:/var/lib/telegram-bot-api
+    # NO healthcheck, deliberately — see `bgutil-provider` above for what a
+    # wrong one costs. That image ships `node`, so its probe cannot be missing.
+    # This one is `alpine` plus `openssl` and `libstdc++`: no curl, no wget, no
+    # interpreter to fall back on. Anything written here would be a guess, and a
+    # guess that fails reports a perfectly healthy server as `(unhealthy)`
+    # forever — worse than no check at all.
+    #
+    # There is also nothing honest to probe. The server answers only
+    # `/bot<token>/<method>`, so a check that could tell "serving" from "dead"
+    # would have to carry the bot token in a command line that `docker inspect`
+    # prints.
+    #
+    # Nothing therefore depends_on this service: with no healthcheck the only
+    # available condition is `service_started`, which says a process was exec'd
+    # and nothing about whether it is listening. Reachability comes from sharing
+    # the network, not from startup order.
+    networks: [internal]
+
   # One-shot. Migrations must not run from the services themselves: two
   # replicas booting at once would race on the same DDL, and a failed migration
   # should stop a deploy rather than crash-loop a bot.
@@ -241,6 +328,9 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  # Not scratch: the local Bot API server's session state lives here, and losing
+  # it makes every bot re-authorise on the next start.
+  telegram-bot-api-data:
   # Scratch space. Every job creates and deletes its own directory here; nothing
   # in it is expected to survive a restart.
   downloads:

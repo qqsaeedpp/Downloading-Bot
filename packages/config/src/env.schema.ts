@@ -41,6 +41,31 @@ const requiredText = (label: string) =>
 const positiveInt = (defaultValue: number, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) =>
   z.coerce.number().int().min(min).max(max).default(defaultValue);
 
+/**
+ * Bounded, but with no default — `undefined` means "the operator said nothing".
+ *
+ * Needed wherever the default cannot be written next to the field because it
+ * depends on another one. The upload ceiling is 50 MB against the public Bot API
+ * and 1900 against a local server; a `.default()` here would make those
+ * indistinguishable from a deliberate 50.
+ */
+const optionalInt = ({ min = 1, max = Number.MAX_SAFE_INTEGER } = {}) =>
+  z.coerce.number().int().min(min).max(max).optional();
+
+/** As {@link booleanFlag}, but distinguishes "unset" from "explicitly false". */
+const optionalBooleanFlag = () =>
+  z
+    .string()
+    .optional()
+    .transform((raw, ctx) => {
+      if (raw === undefined || raw.trim() === '') return undefined;
+      const value = raw.trim().toLowerCase();
+      if (TRUTHY.has(value)) return true;
+      if (FALSY.has(value)) return false;
+      ctx.addIssue({ code: 'custom', message: `expected a boolean, received "${raw}"` });
+      return z.NEVER;
+    });
+
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   APP_VERSION: z.string().trim().min(1).default('0.0.0'),
@@ -50,7 +75,13 @@ export const envSchema = z.object({
 
   TELEGRAM_BOT_TOKEN: requiredText('TELEGRAM_BOT_TOKEN'),
   TELEGRAM_API_ROOT: optionalText(),
-  TELEGRAM_USE_LOCAL_API: booleanFlag(false),
+  // Two spellings of one setting. TELEGRAM_LOCAL_MODE is the documented name;
+  // TELEGRAM_USE_LOCAL_API predates it and is still honoured so that upgrading
+  // does not require editing a running deployment's .env. Both left unset means
+  // false. Both set to DIFFERENT values is rejected rather than silently
+  // resolved — see `assertCoherent`.
+  TELEGRAM_LOCAL_MODE: optionalBooleanFlag(),
+  TELEGRAM_USE_LOCAL_API: optionalBooleanFlag(),
 
   DATABASE_URL: requiredText('DATABASE_URL'),
   DATABASE_POOL_MAX: positiveInt(10, { max: 200 }),
@@ -66,9 +97,29 @@ export const envSchema = z.object({
   DOWNLOAD_DIR: z.string().trim().min(1).default('/data/downloads'),
 
   MAX_DOWNLOAD_MB: positiveInt(500, { max: 20_000 }),
-  MAX_UPLOAD_MB: positiveInt(50, { max: 2_000 }),
-  MAX_TRANSCODE_MB: positiveInt(250, { max: 20_000 }),
+  // Same pairing as the local-mode flag above: TELEGRAM_UPLOAD_LIMIT_MB is the
+  // documented name, MAX_UPLOAD_MB the older one. Neither carries a default,
+  // because the right default depends on the local-mode flag — 1900 against a
+  // local server, 50 against the public API.
+  //
+  // The cap is 1900 and not 2000 deliberately. Telegram's local-server limit is
+  // 2000 MB measured on the encoded multipart body, which is larger than the
+  // file; a ceiling set at exactly 2000 produces a rejection at the very end of
+  // a long upload, which is the most expensive possible moment to fail.
+  TELEGRAM_UPLOAD_LIMIT_MB: optionalInt({ max: 1_900 }),
+  MAX_UPLOAD_MB: optionalInt({ max: 1_900 }),
+  // 80 MB, not 250. This is the size above which an incompatible codec ships as
+  // a document instead of being re-encoded, and the ceiling has to be set by
+  // how long a person will wait rather than by what the machine can survive: a
+  // 250 MB VP9 clip is minutes of CPU, during which the user sees a progress
+  // message and no file. Raise it only on a host with cores to spare.
+  MAX_TRANSCODE_MB: positiveInt(80, { max: 20_000 }),
   MIN_FREE_DISK_MB: positiveInt(2_048, { min: 0 }),
+
+  // Deliver playable files as they are rather than spending minutes re-encoding
+  // them. Default on: a 4K AV1 file transcodes for longer than most users will
+  // wait, and arriving as a document immediately is the better trade.
+  VIDEO_FAST_DELIVERY: booleanFlag(true),
 
   MEDIA_INSPECT_TIMEOUT_MS: positiveInt(30_000, { min: 1_000 }),
   DOWNLOAD_TIMEOUT_MS: positiveInt(900_000, { min: 1_000 }),

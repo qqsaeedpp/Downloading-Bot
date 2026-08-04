@@ -92,10 +92,7 @@ describe('a cookie file the platform rejected', () => {
     const run = vi.fn().mockRejectedValue(new Error(stderr));
 
     await expect(
-      withStaleCookieRetry(
-        { cookies: 'jar', allowRetry: false, logger, platform: 'youtube' },
-        run,
-      ),
+      withStaleCookieRetry({ cookies: 'jar', allowRetry: false, logger, platform: 'youtube' }, run),
     ).rejects.toThrow();
 
     expect(run).toHaveBeenCalledTimes(1);

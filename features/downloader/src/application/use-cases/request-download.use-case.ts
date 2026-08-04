@@ -122,6 +122,10 @@ export class RequestDownloadUseCase {
         type: option.type,
         quality: toQualityString(option),
         formatId: option.formatId,
+        // The size shown on the button the user pressed. Travelling with the
+        // job is what lets the worker decline an oversized download before it
+        // starts, rather than after a gigabyte has already moved.
+        estimatedBytes: option.estimatedBytes,
       },
     });
 

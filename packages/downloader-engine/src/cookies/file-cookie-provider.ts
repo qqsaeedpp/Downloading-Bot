@@ -102,7 +102,8 @@ export class FileCookieProvider implements CookieProvider {
  * reasonably concluding the mount was broken.
  */
 function hintFor(error: unknown): string {
-  const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
+  const code =
+    typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
   if (code === 'EACCES' || code === 'EPERM') {
     return (
       'the containers run as uid 1001. Fix the DIRECTORY as well as the file — ' +

@@ -5,10 +5,12 @@ import {
   probePotProvider,
   reportCookieAccess,
 } from '@tgtools/downloader-engine';
+import { PUBLIC_BOT_API_ROOT_LABEL } from '@tgtools/telegram';
 import { assertEnumCovers } from '@tgtools/database';
 import type { Logger } from '@tgtools/shared';
 import {
   ALL_MEDIA_PLATFORMS,
+  bytesToMegabytes,
   describeError,
   healthCheck,
   installGracefulShutdown,
@@ -47,6 +49,17 @@ async function main(): Promise<void> {
     jsRuntime: toolchain.jsRuntimeVersion ?? 'MISSING',
   });
   warnIfNoJsRuntime(logger, toolchain.jsRuntimeVersion);
+
+  // The delivery settings, echoed once so "why did my 400 MB file get refused"
+  // is answerable from the log rather than by guessing which of two spellings of
+  // the upload ceiling won. No token, and no URL that could carry one.
+  logger.info('telegram delivery', {
+    telegramApiRoot: config.telegram.apiRoot ?? PUBLIC_BOT_API_ROOT_LABEL,
+    telegramLocalMode: config.telegram.useLocalApi,
+    telegramUploadLimitMb: Math.round(bytesToMegabytes(config.limits.maxUploadBytes)),
+    videoFastDelivery: config.limits.videoFastDelivery,
+    maxTranscodeMb: Math.round(bytesToMegabytes(config.limits.maxTranscodeBytes)),
+  });
 
   // Verified at startup, not on the first user's link. "I set the variable and
   // it still says bot check" has two completely different causes -- the provider

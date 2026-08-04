@@ -31,6 +31,15 @@ export const downloadJobPayloadSchema = z.object({
     type: z.enum(DOWNLOAD_TYPE_VALUES),
     quality: z.string().optional(),
     formatId: z.string().optional(),
+    /**
+     * What the chosen rendition was advertised to weigh, from the inspection
+     * the user chose from. Carried so the worker can refuse an oversized job
+     * BEFORE spending the bandwidth, rather than after.
+     *
+     * Optional because not every extractor reports a size, and a job enqueued
+     * by an older release will not have one — neither is a reason to reject it.
+     */
+    estimatedBytes: z.number().int().nonnegative().optional(),
   }),
 });
 

@@ -115,7 +115,7 @@ download
   ├─ per-job workspace (mkdtemp)
   ├─ size watchdog every 3 s
   ├─ progress → DB via ProgressWriter, → Telegram only when the throttler agrees
-  ├─ ffprobe → planNormalization → remux or re-encode
+  ├─ ffprobe → planNormalization → send as-is, remux, re-encode, or ship as a document
   └─ thumbnail from ~10% in
 
 → processing → uploading → send → completed
@@ -179,6 +179,14 @@ end-to-end test caught it.
 
 Without width, height and duration Telegram shows a black box with a 00:00
 timer instead of an inline player, even for a perfectly good H.264 file.
+
+**Documents up front.** The normalisation plan's delivery mode travels with the
+send command, and a video planned as `direct-document` goes straight to
+`sendDocument`. ffprobe has already established that Telegram cannot stream that
+codec, so trying `sendVideo` first would push the whole file — up to 1.9 GB — only
+to be told what was already known, and then push it a second time. Only a video is
+demoted this way: an image sent as a file loses its inline preview for no benefit,
+and audio has no such failure mode.
 
 **The fallback.** Telegram accepts an upload and _then_ decides whether the
 result is playable. When it refuses with an `unsupported_content` shape, the

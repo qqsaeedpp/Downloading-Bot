@@ -1,7 +1,7 @@
 export { hasSessionUser } from './context.js';
 export type { AppContext, AppContextFlavor, SessionUser } from './context.js';
 
-export { createBot, createTelegramApi } from './bot-factory.js';
+export { createBot, createTelegramApi, resolveApiRoot } from './bot-factory.js';
 export type { CreateBotOptions } from './bot-factory.js';
 
 export { classifyTelegramError, isRetryableTelegramError } from './telegram-errors.js';
@@ -15,6 +15,14 @@ export {
   clampText,
   escapeHtml,
 } from './html.js';
+
+export { PUBLIC_BOT_API_ROOT, PUBLIC_BOT_API_ROOT_LABEL } from './api-root.js';
+export {
+  BOT_TOKEN_PLACEHOLDER,
+  resolveTelegramFilePath,
+  withBotToken,
+} from './local-file-resolver.js';
+export type { ResolvedTelegramFile } from './local-file-resolver.js';
 
 export { answerCallbackSafely, editStatusMessage } from './safe-messaging.js';
 export type { EditOutcome, EditStatusOptions } from './safe-messaging.js';

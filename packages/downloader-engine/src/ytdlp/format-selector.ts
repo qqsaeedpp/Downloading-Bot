@@ -59,6 +59,42 @@ const AUDIO_BITRATE_LADDER: readonly number[] = [128, 192, 320];
 const MAX_VIDEO_OPTIONS = 6;
 
 /**
+ * Every candidate worth trying at ONE resolution, best-playing first.
+ *
+ * Telegram's inline player wants H.264 video with AAC audio; hand it VP9, Opus
+ * or AV1 and the clip arrives as a file attachment instead, unless we spend
+ * minutes of CPU re-encoding a stream the source frequently published in the
+ * right codec to begin with. So both halves of the container are asked for
+ * explicitly before either is given up — it costs nothing when the pair exists,
+ * and falls through to the codec-agnostic rungs when it does not.
+ *
+ * Kept as one ladder per height filter rather than one pass per codec, because
+ * that is what makes the resolution dominant: the caller runs it against the
+ * exact height first and every rung here — the unconstrained ones included — is
+ * exhausted before a single candidate one resolution down is considered.
+ */
+function codecLadder(heightFilter: string, sizeFilter: string): readonly string[] {
+  const at = `${heightFilter}${sizeFilter}`;
+  return [
+    // Both halves already correct, merged by yt-dlp. Nothing to re-encode.
+    `bv*${at}[vcodec^=avc1]+ba[acodec^=mp4a]`,
+    // The same pair, pre-muxed by the source. Cheaper still, since there is no
+    // merge step at all, and it is what the MP4-era platforms actually serve.
+    `b${at}[vcodec^=avc1][acodec^=mp4a]`,
+    // Video is the expensive half to fix, so take an H.264 track even when the
+    // only audio on offer is Opus: transcoding a soundtrack costs seconds.
+    `bv*${at}[vcodec^=avc1]+ba`,
+    `b${at}[vcodec^=avc1]`,
+    // Codec preference exhausted at this height. Accepting VP9/AV1 here and
+    // paying for the re-encode is honest; quietly dropping a resolution to
+    // avoid it would not be, which is why these rungs stay above the next
+    // ladder rather than below it.
+    `bv*${at}+ba`,
+    `b${at}`,
+  ];
+}
+
+/**
  * Builds yt-dlp `-f` expressions and derives the quality menu.
  *
  * This is the most consequential piece of logic in the engine: get it wrong and
@@ -78,6 +114,9 @@ export class YtDlpFormatSelector {
    * exact height has no AVC1 copy — 4K is usually VP9/AV1, as is every
    * Instagram reel — the normaliser re-encodes afterwards, so the pick stays
    * both honest and playable.
+   *
+   * Within a height the audio codec is the second tiebreak: see
+   * {@link codecLadder} for why AAC is asked for alongside H.264.
    */
   buildVideoSelector(input: VideoSelectorInput): string {
     const maxMb = Math.max(1, Math.floor(bytesToMegabytes(input.maxBytes)));
@@ -109,20 +148,17 @@ export class YtDlpFormatSelector {
       chain.push(`b${lenient}[vcodec^=avc1]`, `b${lenient}`);
     }
 
+    // What the user actually tapped, tried to exhaustion before anything below
+    // it is looked at.
     if (height !== undefined) {
-      chain.push(
-        `bv*${exact}${strict}[vcodec^=avc1]+ba`,
-        `b${exact}${strict}[vcodec^=avc1]`,
-        `bv*${exact}${strict}+ba`,
-        `b${exact}${strict}`,
-      );
+      chain.push(...codecLadder(exact, strict));
     }
 
+    // The nearest lower resolution, same preferences. Reached only once the
+    // requested height has nothing at all to offer under the size ceiling.
+    chain.push(...codecLadder(atMost, strict));
+
     chain.push(
-      `bv*${atMost}${strict}[vcodec^=avc1]+ba`,
-      `b${atMost}${strict}[vcodec^=avc1]`,
-      `bv*${atMost}${strict}+ba`,
-      `b${atMost}${strict}`,
       `bv*${atMost}${lenient}+ba`,
       `b${atMost}${lenient}`,
       `bv*${lenient}+ba`,
@@ -246,6 +282,10 @@ export class YtDlpFormatSelector {
    * Declared size when there is one, otherwise bitrate times duration. Both are
    * approximations; the caller must treat the result as advisory, which is why
    * the runtime watchdog exists.
+   *
+   * There is no separate `filesize_approx` rung because there is no separate
+   * field: the mapper folds `filesize` and `filesize_approx` into
+   * `filesizeBytes`, an approximate size being evidence all the same.
    */
   estimateBytes(
     format: EngineMediaFormat,
@@ -261,6 +301,35 @@ export class YtDlpFormatSelector {
       return Math.round((format.totalBitrateKbps * 1000 * durationSeconds) / 8);
     }
     return undefined;
+  }
+
+  /**
+   * The smallest video rendition the download chain could possibly land on.
+   *
+   * A floor rather than a prediction, and deliberately so. The chain built by
+   * {@link buildVideoSelector} ends in two rungs carrying no height filter at
+   * all, so every video-bearing format really is reachable — which means the
+   * only refusal that can never be wrong is "not one rendition of this post
+   * fits". Estimating the rendition yt-dlp is *likely* to choose would reject
+   * requests it would have served from a smaller copy.
+   *
+   * A pinned `formatId` is not special-cased for the same reason: the chain
+   * keeps its fallbacks behind an exact id, so the floor is unchanged.
+   *
+   * Audio is not added to a video-only candidate either. At ~128 kbps against a
+   * multi-megabit video track it is noise, and every rounding error here should
+   * fall on the side of letting the download run.
+   */
+  estimateSmallestVideoBytes(
+    formats: readonly EngineMediaFormat[],
+    durationSeconds: number | undefined,
+  ): number | undefined {
+    return formats.reduce<number | undefined>((smallest, format) => {
+      if (format.isAudioOnly) return smallest;
+      const bytes = this.estimateBytes(format, durationSeconds);
+      if (bytes === undefined) return smallest;
+      return smallest === undefined || bytes < smallest ? bytes : smallest;
+    }, undefined);
   }
 
   /** Highest height the source labels, used to decide the progressive shortcut. */

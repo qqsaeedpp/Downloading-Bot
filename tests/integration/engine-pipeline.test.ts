@@ -115,13 +115,12 @@ describe('the engine pipeline, above the process boundary', () => {
   let runner: ScriptedRunner;
   let bundle: EngineBundle;
 
-  beforeEach(async () => {
-    downloadDir = await mkdtemp(join(tmpdir(), 'tgtools-engine-test-'));
-    runner = new ScriptedRunner();
-    bundle = createDownloaderEngine({
+  /** A second engine differing only in its ceiling is how the size tiers are exercised. */
+  function createBundle(maxDownloadBytes: number): EngineBundle {
+    return createDownloaderEngine({
       binaries: { ytDlpPath: 'yt-dlp', ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' },
       limits: {
-        maxDownloadBytes: 500 * MB,
+        maxDownloadBytes,
         maxTranscodeBytes: 250 * MB,
         minFreeDiskBytes: 0,
         inspectTimeoutMs: 5_000,
@@ -136,6 +135,12 @@ describe('the engine pipeline, above the process boundary', () => {
       logger: createNoopLogger(),
       runner,
     });
+  }
+
+  beforeEach(async () => {
+    downloadDir = await mkdtemp(join(tmpdir(), 'tgtools-engine-test-'));
+    runner = new ScriptedRunner();
+    bundle = createBundle(500 * MB);
   });
 
   afterEach(async () => {
@@ -333,6 +338,73 @@ describe('the engine pipeline, above the process boundary', () => {
         platform: MediaPlatform.Instagram,
       }),
     ).rejects.toMatchObject({ code: 'LOGIN_REQUIRED' });
+  });
+
+  it('refuses an oversized post before pulling a single byte', async () => {
+    runner.producedFile = { name: 'huge.mp4', bytes: 2_048 };
+
+    // The estimate rides in on the request rather than being recomputed here:
+    // the quality menu already worked it out to label the button the user
+    // pressed. A guard that re-extracted to find it would double the extraction
+    // count of every video job, on exactly the platforms that rate-limit
+    // extraction hardest — costing more than the thing it guards.
+    await expect(
+      bundle.engine.download(
+        {
+          url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+          platform: MediaPlatform.YouTube,
+          type: DownloadType.Video,
+          estimatedBytes: 9_000 * MB,
+        },
+        {},
+      ),
+    ).rejects.toMatchObject({ code: 'MEDIA_TOO_LARGE' });
+
+    // The point of the tier: the refusal lands before the transfer, not after
+    // minutes of it — and without an extraction either.
+    expect(runner.downloadCalls).toHaveLength(0);
+  });
+
+  it('downloads anyway when the source declares no size at all', async () => {
+    // Instagram and TikTok are always this shape. An unknown estimate must
+    // never block; the runtime watchdog is the backstop that covers them.
+    runner.infoDocument = {
+      id: 'Cx1y2z3AbCd',
+      title: 'A reel',
+      formats: [{ format_id: '0', ext: 'mp4', vcodec: 'avc1', acodec: 'mp4a' }],
+    };
+    runner.producedFile = { name: 'Cx1y2z3AbCd.mp4', bytes: 4_096 };
+
+    const media = await bundle.engine.download(
+      {
+        url: 'https://www.instagram.com/reel/Cx1y2z3AbCd/',
+        platform: MediaPlatform.Instagram,
+        type: DownloadType.Video,
+      },
+      {},
+    );
+
+    expect(media.fileSize).toBe(4_096);
+    expect(runner.downloadCalls).toHaveLength(1);
+  });
+
+  it('refuses a produced file that is over the ceiling rather than handing it on', async () => {
+    // The watchdog stopped looking when the download did, and ffmpeg can hand
+    // back a file larger than it was given. Nothing else weighs the artefact
+    // the user would actually receive.
+    const tightBundle = createBundle(2_048);
+    runner.producedFile = { name: 'Cx1y2z3AbCd.mp4', bytes: 8_192 };
+
+    await expect(
+      tightBundle.engine.download(
+        {
+          url: 'https://www.instagram.com/reel/Cx1y2z3AbCd/',
+          platform: MediaPlatform.Instagram,
+          type: DownloadType.Video,
+        },
+        {},
+      ),
+    ).rejects.toMatchObject({ code: 'MEDIA_TOO_LARGE' });
   });
 
   it('refuses a URL that is not a supported post before anything runs', () => {

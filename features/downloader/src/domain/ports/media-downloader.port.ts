@@ -1,4 +1,10 @@
-import type { DownloadProgress, DownloadStage, DownloadType, MediaPlatform } from '@tgtools/shared';
+import type {
+  DownloadProgress,
+  DownloadStage,
+  DownloadType,
+  MediaPlatform,
+  VideoDeliveryMode,
+} from '@tgtools/shared';
 import type { MediaInfo } from '../entities/media-info.js';
 
 export interface InspectMediaRequest {
@@ -19,6 +25,14 @@ export interface DownloadMediaRequest {
   readonly type: DownloadType;
   readonly quality?: string | undefined;
   readonly formatId?: string | undefined;
+  /**
+   * What the chosen rendition was advertised to weigh, when the extractor said.
+   *
+   * Lets the engine decline before transferring anything. Advisory only — an
+   * absent or wrong estimate must never be the reason a legitimate download is
+   * refused, so the real size is checked again after the transfer.
+   */
+  readonly estimatedBytes?: number | undefined;
 }
 
 export interface DownloadContext {
@@ -32,6 +46,14 @@ export interface DownloadedMediaVideo {
   readonly height: number | undefined;
   readonly duration: number | undefined;
   readonly thumbnailPath: string | undefined;
+  /**
+   * What ffprobe found in the file being handed over. Carried rather than
+   * re-derived downstream because an `.mp4` extension says nothing about
+   * whether Telegram can stream what is inside it.
+   */
+  readonly videoCodec: string | undefined;
+  readonly audioCodec: string | undefined;
+  readonly container: string | undefined;
 }
 
 export interface DownloadedMedia {
@@ -40,6 +62,10 @@ export interface DownloadedMedia {
   readonly mimeType: string;
   readonly fileSize: number;
   readonly video: DownloadedMediaVideo | undefined;
+  /** How this file is meant to reach the user; decided from ffprobe's verdict. */
+  readonly deliveryMode: VideoDeliveryMode;
+  /** Why a re-encode was declined, when one was. For the delivery log. */
+  readonly transcodeSkippedReason: string | undefined;
   /** Removes the job's workspace. Idempotent. */
   cleanup(): Promise<void>;
 }

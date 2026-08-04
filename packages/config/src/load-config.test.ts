@@ -1,6 +1,10 @@
 import { ConfigurationError, MediaPlatform } from '@tgtools/shared';
 import { describe, expect, it } from 'vitest';
-import { PUBLIC_API_UPLOAD_LIMIT_MB, loadConfig } from './load-config.js';
+import {
+  LOCAL_API_UPLOAD_LIMIT_MB,
+  PUBLIC_API_UPLOAD_LIMIT_MB,
+  loadConfig,
+} from './load-config.js';
 
 const BOT_TOKEN = '7000000000:AAF-token-for-tests';
 const DATABASE_URL = 'postgres://tgtools:secret@localhost:5432/tgtools';
@@ -41,7 +45,8 @@ describe('loadConfig', () => {
       limits: {
         maxDownloadBytes: 524_288_000,
         maxUploadBytes: 52_428_800,
-        maxTranscodeBytes: 262_144_000,
+        maxTranscodeBytes: 83_886_080,
+        videoFastDelivery: true,
         maxActiveJobsPerUser: 2,
         rateLimitWindowMs: 60_000,
         rateLimitMaxRequests: 20,
@@ -68,7 +73,7 @@ describe('loadConfig', () => {
       cache: { mediaInfoTtlSeconds: 600, selectionTtlSeconds: 1_800 },
       ffmpeg: { videoCodec: 'libx264', audioCodec: 'aac', preset: 'veryfast', crf: 23 },
       cookies: {},
-      extraction: { proxyUrl: undefined, extractorArgs: {} },
+      extraction: { proxyUrl: undefined, extractorArgs: {}, potProviderUrl: undefined },
       health: { botPort: 3_001, workerPort: 3_002 },
       privacy: { storeFullSourceUrl: false },
       maintenance: { intervalMs: 900_000 },
@@ -155,13 +160,25 @@ describe('loadConfig', () => {
   });
 
   describe('upload ceiling coherence', () => {
-    it('refuses MAX_UPLOAD_MB=2000 on the public Bot API', () => {
+    it('refuses an upload ceiling above what even a local server accepts', () => {
+      // 1900 rather than 2000 is deliberate: the local server measures its 2000 MB
+      // limit on the encoded multipart body, which is larger than the file inside
+      // it. Anything above that is refused before the process starts, because the
+      // alternative is discovering it after streaming a two-gigabyte upload.
       expect(() => loadConfig(env({ MAX_UPLOAD_MB: '2000', MAX_DOWNLOAD_MB: '4000' }))).toThrow(
         ConfigurationError,
       );
       expect(() => loadConfig(env({ MAX_UPLOAD_MB: '2000', MAX_DOWNLOAD_MB: '4000' }))).toThrow(
-        new RegExp(`${PUBLIC_API_UPLOAD_LIMIT_MB} MB limit of Telegram's public Bot API`),
+        /1900/,
       );
+    });
+
+    it('refuses the local-server ceiling while still on the public Bot API', () => {
+      // The pairing is what matters: 1900 MB is legal, but only behind a local
+      // server. Without one every upload over 50 MB would fail at Telegram.
+      expect(() =>
+        loadConfig(env({ TELEGRAM_UPLOAD_LIMIT_MB: '1900', MAX_DOWNLOAD_MB: '4000' })),
+      ).toThrow(new RegExp(`${PUBLIC_API_UPLOAD_LIMIT_MB} MB limit of Telegram's public Bot API`));
     });
 
     it('accepts exactly the public API limit without a local server', () => {
@@ -171,10 +188,10 @@ describe('loadConfig', () => {
       ).toBe(PUBLIC_API_UPLOAD_LIMIT_MB * 1024 * 1024);
     });
 
-    it('accepts a 2000 MB upload once a local Bot API server is configured', () => {
+    it('accepts a 1900 MB upload once a local Bot API server is configured', () => {
       const config = loadConfig(
         env({
-          MAX_UPLOAD_MB: '2000',
+          MAX_UPLOAD_MB: '1900',
           MAX_DOWNLOAD_MB: '4000',
           TELEGRAM_USE_LOCAL_API: 'true',
           TELEGRAM_API_ROOT: 'http://telegram-bot-api:8081',
@@ -183,13 +200,120 @@ describe('loadConfig', () => {
 
       expect(config.telegram.useLocalApi).toBe(true);
       expect(config.telegram.apiRoot).toBe('http://telegram-bot-api:8081');
-      expect(config.limits.maxUploadBytes).toBe(2000 * 1024 * 1024);
+      expect(config.limits.maxUploadBytes).toBe(1900 * 1024 * 1024);
+    });
+
+    it('defaults to the local-server ceiling when local mode is on', () => {
+      // The reason the ceiling carries no schema default: the right number
+      // depends on a different variable. An operator who stands up a local server
+      // should not also have to remember a magic number to unlock it.
+      const config = loadConfig(
+        env({
+          TELEGRAM_LOCAL_MODE: 'true',
+          TELEGRAM_API_ROOT: 'http://telegram-bot-api:8081',
+          MAX_DOWNLOAD_MB: '4000',
+        }),
+      );
+
+      expect(config.limits.maxUploadBytes).toBe(LOCAL_API_UPLOAD_LIMIT_MB * 1024 * 1024);
+    });
+
+    it('keeps the 50 MB default when nothing about local mode is said', () => {
+      // The other half of the same decision. A silent environment must stay on
+      // the public API's terms — guessing generously here would make every large
+      // upload fail at Telegram instead of at startup.
+      expect(loadConfig(env()).limits.maxUploadBytes).toBe(
+        PUBLIC_API_UPLOAD_LIMIT_MB * 1024 * 1024,
+      );
+    });
+
+    it('still honours the older TELEGRAM_USE_LOCAL_API spelling on its own', () => {
+      // Deployments predating the rename are running unattended. Dropping the old
+      // name would quietly drop their upload ceiling from 1900 MB to 50 on an
+      // upgrade nobody thought was risky.
+      const config = loadConfig(
+        env({
+          TELEGRAM_USE_LOCAL_API: 'true',
+          TELEGRAM_API_ROOT: 'http://telegram-bot-api:8081',
+          MAX_DOWNLOAD_MB: '4000',
+        }),
+      );
+
+      expect(config.telegram.useLocalApi).toBe(true);
+      expect(config.limits.maxUploadBytes).toBe(LOCAL_API_UPLOAD_LIMIT_MB * 1024 * 1024);
+    });
+
+    it('refuses two spellings of local mode that disagree', () => {
+      // Picking a winner by precedence would mean an operator who set the name
+      // they knew gets the behaviour of the one they did not, and finds out when
+      // an upload fails. The message has to name both, because the operator is
+      // looking at only one of them in their .env.
+      let message = '';
+      try {
+        loadConfig(
+          env({
+            TELEGRAM_LOCAL_MODE: 'true',
+            TELEGRAM_USE_LOCAL_API: 'false',
+            TELEGRAM_API_ROOT: 'http://telegram-bot-api:8081',
+            MAX_DOWNLOAD_MB: '4000',
+          }),
+        );
+      } catch (error: unknown) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+
+      expect(message).toContain('TELEGRAM_LOCAL_MODE');
+      expect(message).toContain('TELEGRAM_USE_LOCAL_API');
+    });
+
+    it('refuses two spellings of the upload ceiling that disagree', () => {
+      let message = '';
+      try {
+        loadConfig(
+          env({
+            TELEGRAM_UPLOAD_LIMIT_MB: '1900',
+            MAX_UPLOAD_MB: '50',
+            TELEGRAM_LOCAL_MODE: 'true',
+            TELEGRAM_API_ROOT: 'http://telegram-bot-api:8081',
+            MAX_DOWNLOAD_MB: '4000',
+          }),
+        );
+      } catch (error: unknown) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+
+      expect(message).toContain('TELEGRAM_UPLOAD_LIMIT_MB');
+      expect(message).toContain('MAX_UPLOAD_MB');
+    });
+
+    it('accepts both spellings when they agree', () => {
+      // The realistic upgrade path: the new name gets added next to the old one
+      // and both say the same thing. That is not a conflict and must not read as
+      // one.
+      const config = loadConfig(
+        env({
+          TELEGRAM_LOCAL_MODE: 'true',
+          TELEGRAM_USE_LOCAL_API: 'true',
+          TELEGRAM_UPLOAD_LIMIT_MB: '1000',
+          MAX_UPLOAD_MB: '1000',
+          TELEGRAM_API_ROOT: 'http://telegram-bot-api:8081',
+          MAX_DOWNLOAD_MB: '4000',
+        }),
+      );
+
+      expect(config.telegram.useLocalApi).toBe(true);
+      expect(config.limits.maxUploadBytes).toBe(1000 * 1024 * 1024);
     });
 
     it('throws when the local API is enabled without TELEGRAM_API_ROOT', () => {
-      expect(() => loadConfig(env({ TELEGRAM_USE_LOCAL_API: 'true' }))).toThrow(
-        /TELEGRAM_USE_LOCAL_API=true requires TELEGRAM_API_ROOT/,
-      );
+      // Local mode with nowhere to send the request is the one combination that
+      // looks healthy at startup and fails on every single job.
+      expect(() =>
+        loadConfig(env({ TELEGRAM_LOCAL_MODE: 'true', MAX_DOWNLOAD_MB: '4000' })),
+      ).toThrow(/TELEGRAM_LOCAL_MODE=true requires TELEGRAM_API_ROOT/);
+      expect(() =>
+        loadConfig(env({ TELEGRAM_USE_LOCAL_API: 'true', MAX_DOWNLOAD_MB: '4000' })),
+      ).toThrow(/requires TELEGRAM_API_ROOT/);
     });
 
     it('treats an empty TELEGRAM_API_ROOT as unset', () => {
@@ -204,10 +328,41 @@ describe('loadConfig', () => {
       );
     });
 
+    it('throws when the local-mode ceiling exceeds MAX_DOWNLOAD_MB', () => {
+      // Nothing can ever grow into that headroom, so the pair describes an
+      // intention the process cannot carry out. Most likely someone raised the
+      // upload ceiling and forgot that the file has to be downloaded first.
+      expect(() =>
+        loadConfig(
+          env({
+            TELEGRAM_LOCAL_MODE: 'true',
+            TELEGRAM_API_ROOT: 'http://telegram-bot-api:8081',
+            TELEGRAM_UPLOAD_LIMIT_MB: '1900',
+            MAX_DOWNLOAD_MB: '500',
+          }),
+        ),
+      ).toThrow(/upload ceiling is 1900 MB but MAX_DOWNLOAD_MB=500/);
+    });
+
     it('throws when MAX_TRANSCODE_MB exceeds MAX_DOWNLOAD_MB', () => {
       expect(() =>
         loadConfig(env({ MAX_DOWNLOAD_MB: '100', MAX_UPLOAD_MB: '50', MAX_TRANSCODE_MB: '200' })),
       ).toThrow(/MAX_TRANSCODE_MB=200 exceeds MAX_DOWNLOAD_MB=100/);
+    });
+  });
+
+  describe('video delivery', () => {
+    it('defaults to shipping a playable file rather than re-encoding it', () => {
+      // The default decides how the bot feels to use: a 4K AV1 clip transcodes
+      // for longer than most people will wait, and arriving now as a document
+      // beats arriving in ten minutes as a video.
+      expect(loadConfig(env()).limits.videoFastDelivery).toBe(true);
+    });
+
+    it('can be turned off for deployments that want in-app playback at any cost', () => {
+      expect(loadConfig(env({ VIDEO_FAST_DELIVERY: 'false' })).limits.videoFastDelivery).toBe(
+        false,
+      );
     });
   });
 
@@ -252,7 +407,11 @@ describe('loadConfig', () => {
     it('reports every coherence problem at once rather than only the first', () => {
       let message = '';
       try {
-        loadConfig(env({ MAX_UPLOAD_MB: '2000', MAX_DOWNLOAD_MB: '100' }));
+        // MAX_TRANSCODE_MB is set explicitly rather than left to its default.
+        // It used to default to 250, which happened to exceed the 100 below and
+        // so raised the second problem by accident — so lowering the default
+        // silently turned this into a one-problem test.
+        loadConfig(env({ MAX_UPLOAD_MB: '1900', MAX_DOWNLOAD_MB: '100', MAX_TRANSCODE_MB: '250' }));
       } catch (error: unknown) {
         message = error instanceof Error ? error.message : String(error);
       }

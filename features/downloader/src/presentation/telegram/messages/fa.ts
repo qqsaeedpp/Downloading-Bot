@@ -85,10 +85,27 @@ export const fa = {
   callbackAcknowledged: 'ثبت شد',
   callbackExpired: 'این دکمه دیگر معتبر نیست.',
 
-  /** The caption attached to the delivered file. */
-  deliveredCaption(title: string, quality: string | undefined): string {
+  /**
+   * The caption attached to the delivered file.
+   *
+   * `asDocument` appends the note explaining why a video arrived as a file.
+   * Without it, "document" reads as a failure rather than as the deliberate
+   * choice to hand over the original instead of spending minutes re-encoding.
+   */
+  deliveredCaption(
+    title: string,
+    quality: string | undefined,
+    options: { readonly asDocument?: boolean } = {},
+  ): string {
     const lines = [`✅ <b>${escapeHtml(title)}</b>`];
     if (quality !== undefined) lines.push(`کیفیت: ${toPersianDigits(escapeHtml(quality))}`);
+    if (options.asDocument === true) {
+      lines.push(
+        '',
+        'ℹ️ این کیفیت با کدک اصلی ارسال شده است و ممکن است داخل تلگرام پخش مستقیم نداشته باشد.',
+        'فایل بدون افت کیفیت قابل دانلود است.',
+      );
+    }
     return lines.join('\n');
   },
 
@@ -164,6 +181,10 @@ export const fa = {
         return '⏳ در حال آماده‌سازی…';
       case DownloadStage.Downloading:
         return '⬇️ در حال دانلود…';
+      case DownloadStage.Packaging:
+        // A stream copy: seconds, not minutes. Deliberately NOT called an
+        // optimisation — that word sets an expectation of a long wait.
+        return '📦 در حال آماده‌سازی فایل برای ارسال…';
       case DownloadStage.Normalizing:
         return '⚙️ در حال بهینه‌سازی برای پخش در تلگرام…';
       case DownloadStage.Uploading:
