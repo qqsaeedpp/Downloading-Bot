@@ -129,3 +129,26 @@ export const STALE_SESSION_PATTERNS: readonly RegExp[] = [
 export function matchesStaleSession(message: string): boolean {
   return STALE_SESSION_PATTERNS.some((pattern) => pattern.test(message));
 }
+
+/**
+ * Phrases that mean "the cookie file you supplied was REJECTED" — nothing else.
+ *
+ * Deliberately much narrower than {@link STALE_SESSION_PATTERNS}. That list is
+ * tuned for "should we retry anonymously?", where a false positive costs one
+ * extra request. This one drives a message telling an operator their credential
+ * is dead, where a false positive sends them re-exporting cookies because a
+ * video happened to be private.
+ *
+ * Worth matching explicitly because yt-dlp emits these as a WARNING and then
+ * ends on a generic error. Read only the last line — which is what both a human
+ * and the error mapper do — and the actionable half of the diagnosis is lost.
+ */
+export const REJECTED_COOKIE_PATTERNS: readonly RegExp[] = [
+  /cookies are no longer valid/i,
+  /cookies have (?:likely )?been rotated/i,
+  /provided .{0,30}cookies (?:are|were) (?:no longer valid|invalid)/i,
+];
+
+export function matchesRejectedCookies(message: string): boolean {
+  return REJECTED_COOKIE_PATTERNS.some((pattern) => pattern.test(message));
+}

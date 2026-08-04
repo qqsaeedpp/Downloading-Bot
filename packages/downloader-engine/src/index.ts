@@ -17,8 +17,10 @@ export type { EngineErrorOptions } from './errors/engine-error.js';
 export { YtDlpErrorMapper } from './errors/ytdlp-error-mapper.js';
 export type { YtDlpFailure } from './errors/ytdlp-error-mapper.js';
 export {
+  REJECTED_COOKIE_PATTERNS,
   STALE_SESSION_PATTERNS,
   YTDLP_ERROR_PATTERNS,
+  matchesRejectedCookies,
   matchesStaleSession,
 } from './errors/ytdlp-error-patterns.js';
 
