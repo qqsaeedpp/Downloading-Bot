@@ -100,6 +100,84 @@ x-app-env: &app-env
   PINTEREST_EXTRACTOR_ARGS: ${PINTEREST_EXTRACTOR_ARGS:-}
   YOUTUBE_EXTRACTOR_ARGS: ${YOUTUBE_EXTRACTOR_ARGS:-}
   YOUTUBE_POT_PROVIDER_URL: ${YOUTUBE_POT_PROVIDER_URL:-}
+
+  # ---- File tools ----
+  #
+  # Shared by all three processes rather than scoped to `tools-worker`, and that
+  # is load-bearing rather than tidiness. Two reasons.
+  #
+  # The bot READS these: it builds its menu from the per-family switches and
+  # enforces MAX_ACTIVE_TOOL_JOBS_PER_USER before queueing anything. Left out, it
+  # would fall back to the schema defaults and could offer a family whose queue
+  # nothing drains.
+  #
+  # And the coherence rules run at startup in EVERY process. Give the bot one set
+  # of ceilings and the tools worker another, and the same .env produces two
+  # different verdicts — one container boots, the other refuses, and the pair
+  # disagree about what is supposed to be a single fact.
+  #
+  # Off by default, matching the schema: a downloader-only deployment should not
+  # be running image and video processing. Set TOOLS_ENABLED=true in .env once,
+  # for all three processes, and then start the tools-worker service — it exits
+  # 78 while this is false.
+  TOOLS_ENABLED: ${TOOLS_ENABLED:-false}
+  # Per-family switches. Turning one off stops its queue being drained AND
+  # removes it from the bot's menu, so a user is never walked through a whole
+  # flow whose job would then sit in Redis forever.
+  IMAGE_TOOLS_ENABLED: ${IMAGE_TOOLS_ENABLED:-true}
+  VIDEO_TOOLS_ENABLED: ${VIDEO_TOOLS_ENABLED:-true}
+  PDF_TOOLS_ENABLED: ${PDF_TOOLS_ENABLED:-true}
+  QR_TOOLS_ENABLED: ${QR_TOOLS_ENABLED:-true}
+  # Fixed, not `${...}`, for the same reason DOWNLOAD_DIR above is: it names a
+  # mount point inside the container, and a value from someone's .env would point
+  # at a path no volume is mounted on. It must also differ from DOWNLOAD_DIR — the
+  # two have independent cleanup sweeps, and the config layer refuses to start
+  # when they name the same directory.
+  TOOL_WORKSPACE_DIR: /data/tools
+  TOOL_SESSION_TTL_SECONDS: ${TOOL_SESSION_TTL_SECONDS:-900}
+  TOOL_MIN_FREE_DISK_MB: ${TOOL_MIN_FREE_DISK_MB:-2048}
+  TOOL_JOB_TIMEOUT_MS: ${TOOL_JOB_TIMEOUT_MS:-3600000}
+  TOOL_UPLOAD_TIMEOUT_MS: ${TOOL_UPLOAD_TIMEOUT_MS:-900000}
+  # 20 MB, and raising it needs a local Bot API server rather than a bigger
+  # number: the public API refuses `getFile` above 20 MB whatever the upload
+  # ceiling says, so a larger value here would promise to accept files the bot
+  # could never collect. Startup checks exactly that.
+  IMAGE_TOOL_MAX_MB: ${IMAGE_TOOL_MAX_MB:-20}
+  # A decompression-bomb guard: a few-kilobyte PNG can declare a canvas that
+  # exhausts the host's memory once decoded.
+  IMAGE_TOOL_MAX_PIXELS: ${IMAGE_TOOL_MAX_PIXELS:-60000000}
+  IMAGE_TOOL_MAX_DIMENSION: ${IMAGE_TOOL_MAX_DIMENSION:-12000}
+  IMAGE_TOOL_CONCURRENCY: ${IMAGE_TOOL_CONCURRENCY:-3}
+  VIDEO_TOOL_MAX_MB: ${VIDEO_TOOL_MAX_MB:-20}
+  VIDEO_TOOL_MAX_DURATION_SECONDS: ${VIDEO_TOOL_MAX_DURATION_SECONDS:-7200}
+  # One, deliberately: FFmpeg already saturates the cores it is given, so a
+  # second concurrent transcode makes both slower rather than the pair faster.
+  VIDEO_TOOL_CONCURRENCY: ${VIDEO_TOOL_CONCURRENCY:-1}
+  VIDEO_TOOL_TIMEOUT_MS: ${VIDEO_TOOL_TIMEOUT_MS:-1800000}
+  PDF_TOOL_MAX_MB: ${PDF_TOOL_MAX_MB:-20}
+  PDF_TOOL_MAX_PAGES: ${PDF_TOOL_MAX_PAGES:-50}
+  PDF_TOOL_MAX_IMAGES: ${PDF_TOOL_MAX_IMAGES:-50}
+  # Raising this raises the pixel count of every rendered page, and startup
+  # refuses a DPI at which an A4 page would not fit under IMAGE_TOOL_MAX_PIXELS.
+  PDF_RENDER_DPI: ${PDF_RENDER_DPI:-150}
+  PDF_TOOL_CONCURRENCY: ${PDF_TOOL_CONCURRENCY:-1}
+  PDF_TOOL_TIMEOUT_MS: ${PDF_TOOL_TIMEOUT_MS:-900000}
+  # A QR is milliseconds of work, so it gets the highest concurrency and the
+  # shortest timeout of the four.
+  QR_MAX_INPUT_BYTES: ${QR_MAX_INPUT_BYTES:-1500}
+  QR_TOOL_CONCURRENCY: ${QR_TOOL_CONCURRENCY:-4}
+  QR_TOOL_TIMEOUT_MS: ${QR_TOOL_TIMEOUT_MS:-30000}
+  TOOL_QUEUE_JOB_ATTEMPTS: ${TOOL_QUEUE_JOB_ATTEMPTS:-2}
+  TOOL_QUEUE_BACKOFF_MS: ${TOOL_QUEUE_BACKOFF_MS:-5000}
+  # Renewed while a processor runs, so it belongs far below the longest tool
+  # step, not above it: a lock that outlives the work stops a stalled job from
+  # ever being reclaimed.
+  TOOL_QUEUE_LOCK_DURATION_MS: ${TOOL_QUEUE_LOCK_DURATION_MS:-60000}
+  TOOL_ORPHAN_WORKSPACE_MAX_AGE_HOURS: ${TOOL_ORPHAN_WORKSPACE_MAX_AGE_HOURS:-6}
+  TOOL_MAINTENANCE_INTERVAL_MS: ${TOOL_MAINTENANCE_INTERVAL_MS:-900000}
+  MAX_ACTIVE_TOOL_JOBS_PER_USER: ${MAX_ACTIVE_TOOL_JOBS_PER_USER:-2}
+  TOOL_PROGRESS_UPDATE_INTERVAL_MS: ${TOOL_PROGRESS_UPDATE_INTERVAL_MS:-3000}
+
   TZ: ${TZ:-UTC}
 
 services:
@@ -325,6 +403,79 @@ services:
     stop_grace_period: 90s
     networks: [internal]
 
+  # The tools process — image, video, PDF and QR work.
+  #
+  # A third service rather than more queues in `worker`, because the two contend
+  # for different resources: a 4K resize and a fifty-page render each want a
+  # core, where a download wants bandwidth. Sharing the downloader's container
+  # would mean one user's PDF delaying everyone's videos.
+  #
+  # It talks to Telegram but never receives updates — only `bot` may long-poll,
+  # since two pollers on one token steal each other's messages.
+  #
+  # No explicit `image:`, unlike `worker`: nothing else shares this tag, so the
+  # per-service name Compose derives is exactly right.
+  tools-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.tools
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      <<: *app-env
+      # Every TOOL_* setting lives in the x-app-env anchor above, shared with the
+      # bot and the downloader worker. It has to be shared: the bot builds its
+      # menu from the family switches, and the coherence rules run in all three
+      # processes — so one set of values here and another there would let the same
+      # .env boot one container and stop the next.
+      #
+      # TOOLS_ENABLED defaults to false, so this service exits 78 until it is set.
+      # There is no `profiles:` convention in this file to gate the service on, and
+      # inventing one here would leave the other optional services gated
+      # differently. Running without the tools therefore means not starting it:
+      #   docker compose up -d postgres redis bot worker
+      TOOLS_WORKER_HEALTH_PORT: 3003
+    ports:
+      - "127.0.0.1:${TOOLS_WORKER_HEALTH_PORT:-3003}:3003"
+    volumes:
+      # Its own scratch space, NOT the downloader's `downloads` volume. The two
+      # sweep for orphans independently, so a shared directory would let one
+      # delete the other's in-flight files — which is why the config layer
+      # refuses TOOL_WORKSPACE_DIR == DOWNLOAD_DIR outright.
+      - tools-workspace:/data/tools
+      # The local Bot API server's storage, READ-ONLY.
+      #
+      # This is the one process that reads what that server wrote: with
+      # TELEGRAM_LOCAL_MODE on, `getFile` answers with an absolute path on the
+      # server's own disk instead of a URL, and sharing the volume is what makes
+      # that path openable from here. The fetcher copies the file into the job
+      # workspace rather than working on it in place — the Bot API server
+      # deletes its copy whenever it likes, and a transcode reading straight
+      # from that directory would race the deletion — so nothing here ever needs
+      # to write, and `:ro` makes damaging the server's storage impossible.
+      #
+      # The mount point is the default local file root the config layer uses, so
+      # a deployment that follows this file sets no TELEGRAM_LOCAL_FILE_ROOTS.
+      # Harmless without local mode: the roots list is empty then, every file
+      # arrives over HTTPS, and this mount is simply never read.
+      - telegram-bot-api-data:/var/lib/telegram-bot-api:ro
+      # No ./secrets mount, unlike bot and worker: cookie files exist for yt-dlp,
+      # and this process never fetches from anywhere but Telegram.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # `tool_jobs` arrives in 0002_add_tool_jobs.sql; without it every job fails
+      # on its first insert.
+      migrate:
+        condition: service_completed_successfully
+    # Must exceed the shutdown deadline the process sets itself, which is
+    # WORKER_SHUTDOWN_GRACE_MS + 30 s — 60 s at the defaults above. Docker would
+    # otherwise SIGKILL a container that was still letting a render finish.
+    stop_grace_period: 90s
+    networks: [internal]
+
 volumes:
   postgres-data:
   redis-data:
@@ -334,6 +485,10 @@ volumes:
   # Scratch space. Every job creates and deletes its own directory here; nothing
   # in it is expected to survive a restart.
   downloads:
+  # The tools process's scratch space, and separate from `downloads` on purpose:
+  # the two sweeps for abandoned directories run independently, so one volume
+  # would mean one process deleting the other's in-flight files.
+  tools-workspace:
 
 networks:
   internal:

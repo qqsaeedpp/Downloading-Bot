@@ -1,0 +1,155 @@
+# syntax=docker/dockerfile:1.7
+# =============================================================================
+#  Tools image — FFmpeg, Poppler and libvips. No network, by construction.
+#
+#  The third process, beside the bot and the downloader worker. Everything it
+#  does starts from a file a user already sent: resize it, transcode it, render
+#  it, encode a QR. Nothing in it fetches a URL a stranger chose.
+#
+#  That is why there is NO yt-dlp and NO Deno here, unlike Dockerfile.worker.
+#  Both exist purely to download from the public internet and to solve
+#  YouTube's player challenge, and this process does neither. Leaving them out
+#  is not a size optimisation: it is what makes "the tools process cannot be
+#  talked into fetching an arbitrary URL" a property of the image rather than a
+#  rule someone has to remember. It also drops python3, curl and unzip, which
+#  were only ever there to install and run those two.
+# =============================================================================
+
+ARG NODE_VERSION=22
+
+# ── Stage 1: install dependencies ────────────────────────────────────────────
+FROM node:${NODE_VERSION}-bookworm-slim AS deps
+WORKDIR /app
+
+# Manifests only, so this layer survives every source change.
+#
+# EVERY workspace, not just the ones this image runs — and the failure this
+# avoids is a silent one. `npm ci` does NOT complain about a workspace that the
+# lock file knows and the build context does not: it quietly drops that
+# workspace and everything only it depended on. Omit `packages/file-tools-engine`
+# here and the install succeeds without sharp, pdfkit or qrcode, and the first
+# sign of it is a module-not-found in stage 2.
+COPY package.json package-lock.json turbo.json ./
+COPY apps/bot/package.json apps/bot/
+COPY apps/tools-worker/package.json apps/tools-worker/
+COPY apps/worker/package.json apps/worker/
+COPY packages/config/package.json packages/config/
+COPY packages/database/package.json packages/database/
+COPY packages/downloader-engine/package.json packages/downloader-engine/
+COPY packages/file-tools-engine/package.json packages/file-tools-engine/
+COPY packages/logger/package.json packages/logger/
+COPY packages/queue/package.json packages/queue/
+COPY packages/shared/package.json packages/shared/
+COPY packages/telegram/package.json packages/telegram/
+COPY packages/tool-contracts/package.json packages/tool-contracts/
+COPY features/downloader/package.json features/downloader/
+COPY features/help/package.json features/help/
+COPY features/start/package.json features/start/
+COPY features/tools/package.json features/tools/
+COPY features/users/package.json features/users/
+
+# `--ignore-scripts` stops any dependency's postinstall from reaching the
+# network to fetch its own binary.
+#
+# Sharp survives this, and that is worth stating rather than discovering. Since
+# 0.33 it ships no install script at all: the native binding and libvips arrive
+# as ordinary OPTIONAL DEPENDENCIES (`@img/sharp-linux-x64` plus
+# `@img/sharp-libvips-linux-x64`), which npm resolves from the lock file like
+# any other package. Nothing is downloaded outside npm, nothing is compiled,
+# and `--ignore-scripts` therefore costs nothing here.
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --ignore-scripts
+
+# ── Stage 2: compile ─────────────────────────────────────────────────────────
+FROM deps AS build
+WORKDIR /app
+COPY tsconfig.base.json ./
+COPY packages/ packages/
+COPY features/ features/
+COPY apps/ apps/
+RUN npx turbo run build --filter=@tgtools/tools-worker
+
+# Drop dev dependencies from the tree that ships.
+RUN --mount=type=cache,target=/root/.npm \
+    npm prune --omit=dev
+
+# ── Stage 3: runtime ─────────────────────────────────────────────────────────
+FROM node:${NODE_VERSION}-bookworm-slim AS runtime
+
+# `bookworm-slim`, deliberately — the same base as every other image here, and
+# NOT alpine.
+#
+# Sharp is the reason. Its prebuilt binaries come in two flavours, glibc
+# (`@img/sharp-linux-x64`) and musl (`@img/sharp-linuxmusl-x64`), each declaring
+# its `libc` in package.json so npm picks by the machine it installs on. Debian
+# is glibc, stage 1 therefore installs the glibc build, and this identical base
+# can load it. An alpine runtime handed a glibc node_modules fails at the first
+# image operation with an unhelpful "could not load the sharp module" — and the
+# musl prebuilds are published for x64 and arm64 ONLY, where glibc covers arm,
+# ppc64, riscv64 and s390x too, so an alpine image on anything else needs
+# `vips-dev` and a source build.
+#
+# libvips itself is an npm package, not an apt one: `@img/sharp-linux-x64`
+# optionally depends on `@img/sharp-libvips-linux-x64`, which carries the
+# prebuilt library. That is why no `libvips` is installed below. The startup
+# toolchain probe encodes one real pixel through this path, so a libc mismatch
+# is a fatal startup error rather than a job that fails in production.
+#
+# No YTDLP_PATH and no DENO_PATH: nothing in this process resolves them, and
+# pointing configuration at binaries that are not installed is how the bot
+# image previously broke its own inspection path.
+ENV NODE_ENV=production \
+    FFMPEG_PATH=/usr/bin/ffmpeg \
+    FFPROBE_PATH=/usr/bin/ffprobe \
+    TOOL_WORKSPACE_DIR=/data/tools
+
+# `tini` as PID 1 so SIGTERM reaches Node and the graceful shutdown actually
+# runs — without an init, a killed ffmpeg or pdftocairo child becomes a zombie
+# and the container accumulates them until it runs out of process slots. This
+# process forks more children than the worker does, not fewer.
+#
+# `poppler-utils` is `pdftocairo` and `pdfinfo`, both of which the PDF
+# processor invokes by bare name and therefore expects on PATH; they land in
+# /usr/bin. `ffprobe` needs no package of its own — it ships inside `ffmpeg`,
+# which Debian builds with libmp3lame, the encoder every "video to MP3" job
+# needs. `ca-certificates` is for HTTPS to api.telegram.org when the deployment
+# is NOT in local Bot API mode; without it every file fetch fails verification.
+#
+# No fonts and no fontconfig: nothing here renders text. PDFKit only places
+# images, and Sharp is never asked for `text()`.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        ffmpeg \
+        poppler-utils \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/package.json ./package.json
+COPY --from=build /app/packages ./packages
+COPY --from=build /app/features ./features
+COPY --from=build /app/apps/tools-worker ./apps/tools-worker
+# The two apps this image does not run, as manifests only. npm links every
+# workspace into node_modules, and a link whose target does not exist is a
+# dangling symlink that anything walking the tree can trip over.
+COPY --from=build /app/apps/bot/package.json ./apps/bot/package.json
+COPY --from=build /app/apps/worker/package.json ./apps/worker/package.json
+COPY infra/migrations ./infra/migrations
+
+# Non-root. The tools workspace is the only thing this process may write to —
+# the Bot API volume it also mounts is read-only, because it copies a source
+# file out of there and must never be able to change what the server wrote.
+RUN groupadd --system --gid 1001 tgtools \
+    && useradd --system --uid 1001 --gid tgtools --no-create-home tgtools \
+    && mkdir -p /data/tools \
+    && chown -R tgtools:tgtools /data
+USER tgtools
+
+EXPOSE 3003
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:'+(process.env.TOOLS_WORKER_HEALTH_PORT||3003)+'/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "apps/tools-worker/dist/bootstrap.js"]
