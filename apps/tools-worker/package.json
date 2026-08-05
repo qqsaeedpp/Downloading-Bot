@@ -1,0 +1,33 @@
+{
+  "name": "@tgtools/tools-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/bootstrap.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check-types": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/bootstrap.js",
+    "dev": "node --env-file-if-exists=../../.env --watch --import tsx src/bootstrap.ts",
+    "clean": "rimraf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@tgtools/config": "*",
+    "@tgtools/database": "*",
+    "@tgtools/file-tools-engine": "*",
+    "@tgtools/logger": "*",
+    "@tgtools/queue": "*",
+    "@tgtools/shared": "*",
+    "@tgtools/telegram": "*",
+    "@tgtools/tool-contracts": "*",
+    "bullmq": "^5.81.3",
+    "grammy": "^1.45.1",
+    "ioredis": "^5.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.23.1",
+    "typescript": "^5.9.3"
+  }
+}

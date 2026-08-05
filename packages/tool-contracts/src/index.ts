@@ -17,3 +17,18 @@ export {
   toolSessionSchema,
 } from './session.js';
 export type { ToolInputReference, ToolSession, ToolSessionState } from './session.js';
+
+export {
+  TOOL_JOB_SCHEMA_VERSION,
+  expectedInputCount,
+  parseToolJobPayload,
+  toolJobPayload,
+  toolJobPayloadSchema,
+  toolOperationSchema,
+} from './job-payload.js';
+export type {
+  ToolJobParseFailure,
+  ToolJobParseSuccess,
+  ToolJobPayload,
+  ToolOperation,
+} from './job-payload.js';
