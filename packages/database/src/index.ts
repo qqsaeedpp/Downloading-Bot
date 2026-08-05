@@ -12,6 +12,9 @@ export {
   mediaInspections,
   mediaTypeEnum,
   platformEnum,
+  toolJobEvents,
+  toolJobInputs,
+  toolJobs,
   users,
 } from './schema/index.js';
 export type {
@@ -21,6 +24,12 @@ export type {
   NewDownloadEventRow,
   NewDownloadJobRow,
   NewMediaInspectionRow,
+  NewToolJobEventRow,
+  NewToolJobInputRow,
+  NewToolJobRow,
   NewUserRow,
+  ToolJobEventRow,
+  ToolJobInputRow,
+  ToolJobRow,
   UserRow,
 } from './schema/index.js';

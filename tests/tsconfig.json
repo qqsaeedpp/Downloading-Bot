@@ -17,7 +17,14 @@
       "@tgtools/queue": ["packages/queue/src/index.ts"],
       "@tgtools/telegram": ["packages/telegram/src/index.ts"],
       "@tgtools/downloader-engine": ["packages/downloader-engine/src/index.ts"],
+      // Added late: without these two the tool packages' colocated tests
+      // resolved through `node_modules` to `dist/*.d.ts`, so vitest ran against
+      // `src` while tsc checked a build that could be hours old. A test written
+      // against a signature that had just changed still type-checked.
+      "@tgtools/tool-contracts": ["packages/tool-contracts/src/index.ts"],
+      "@tgtools/file-tools-engine": ["packages/file-tools-engine/src/index.ts"],
       "@tgtools/feature-downloader": ["features/downloader/src/index.ts"],
+      "@tgtools/feature-tools": ["features/tools/src/index.ts"],
       "@tgtools/feature-users": ["features/users/src/index.ts"],
       "@tgtools/feature-start": ["features/start/src/index.ts"],
       "@tgtools/feature-help": ["features/help/src/index.ts"]
