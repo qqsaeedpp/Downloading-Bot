@@ -21,3 +21,42 @@ export type { ProcessRunOptions, ProcessRunResult } from './process/child-proces
 
 export { ToolWorkspaceManager, assertNotSymlinked } from './workspace/tool-workspace.js';
 export type { ToolWorkspace, WorkspaceManagerOptions } from './workspace/tool-workspace.js';
+
+export {
+  COMPRESSION_LEVEL_VALUES,
+  COMPRESSION_PRESETS,
+  IMAGE_FORMAT_VALUES,
+  RESIZE_FIT_VALUES,
+  RESIZE_PRESETS,
+  isImageFormat,
+  isResizePresetKey,
+} from './image/image-processor.js';
+export type {
+  CompressOptions,
+  CompressionLevel,
+  CompressionPreset,
+  ConvertOptions,
+  ImageFormat,
+  ImageLimits,
+  ImageMetadata,
+  ImageProcessor,
+  ImageResult,
+  ResizeFit,
+  ResizeOptions,
+  ResizePresetKey,
+} from './image/image-processor.js';
+
+export {
+  DEFAULT_TARGET_SEARCH_POLICY,
+  estimateScale,
+  searchForTargetSize,
+} from './image/target-size-search.js';
+export type {
+  EncodeProbe,
+  TargetSearchAttempt,
+  TargetSearchOutcome,
+  TargetSearchPolicy,
+} from './image/target-size-search.js';
+
+export { SharpImageProcessor } from './image/sharp-image-processor.js';
+export type { SharpImageProcessorOptions } from './image/sharp-image-processor.js';
