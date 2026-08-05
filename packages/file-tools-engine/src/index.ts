@@ -88,3 +88,29 @@ export {
 
 export { FfmpegVideoProcessor } from './video/ffmpeg-video-processor.js';
 export type { FfmpegVideoProcessorOptions } from './video/ffmpeg-video-processor.js';
+
+export {
+  QR_KIND_VALUES,
+  WIFI_SECURITY_VALUES,
+  assertPayloadFits,
+  buildQrPayload,
+  escapeWifiValue,
+  isQrKind,
+  normalizePhone,
+  normalizeUrl,
+} from './qr/qr-payload.js';
+export type { QrInput, QrKind, WifiSecurity } from './qr/qr-payload.js';
+
+export {
+  NodeQrGenerator,
+  QR_ERROR_CORRECTION_VALUES,
+  QR_OUTPUT_FORMAT_VALUES,
+} from './qr/qr-generator.js';
+export type {
+  NodeQrGeneratorOptions,
+  QrErrorCorrection,
+  QrGenerateOptions,
+  QrGenerator,
+  QrOutputFormat,
+  QrResult,
+} from './qr/qr-generator.js';
