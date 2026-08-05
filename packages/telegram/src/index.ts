@@ -17,6 +17,18 @@ export {
 } from './html.js';
 
 export { PUBLIC_BOT_API_ROOT, PUBLIC_BOT_API_ROOT_LABEL } from './api-root.js';
+
+export {
+  CALLBACK_DATA_MAX_BYTES,
+  CALLBACK_VERSION,
+  CallbackEncodingError,
+  CallbackNamespace,
+  createShortId,
+  decodeCallback,
+  encodeCallback,
+  isCurrentVersion,
+} from './callback-codec.js';
+export type { DecodedCallback } from './callback-codec.js';
 export {
   BOT_TOKEN_PLACEHOLDER,
   resolveTelegramFilePath,

@@ -26,6 +26,20 @@ export const QueueName = {
    * repeat-key migration to get wrong, for no benefit.
    */
   Maintenance: 'maintenance',
+
+  /**
+   * The file tools, split by the resource each family contends for rather than
+   * lumped into one queue.
+   *
+   * The split is the point: a 30-minute PDF render or a video transcode sharing
+   * a queue with QR generation would leave a user waiting minutes for an
+   * operation that takes 40 ms. Separate queues let each family carry its own
+   * concurrency — video at 1, QR at 4 — which one queue cannot.
+   */
+  ToolImage: 'tool-image',
+  ToolVideo: 'tool-video',
+  ToolPdf: 'tool-pdf',
+  ToolQr: 'tool-qr',
 } as const;
 
 export type QueueName = (typeof QueueName)[keyof typeof QueueName];

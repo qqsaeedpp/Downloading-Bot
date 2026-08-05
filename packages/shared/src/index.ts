@@ -38,6 +38,21 @@ export {
 // `const` of the same name to merge with, so it cannot ride in the value block.
 export type { DownloadProgress, VideoDeliveryMode } from './media/vocabulary.js';
 
+export {
+  ALL_TOOL_FAMILIES,
+  ALL_TOOL_KEYS,
+  TERMINAL_TOOL_JOB_STATUSES,
+  TOOL_FAMILY_VALUES,
+  TOOL_JOB_STATUS_VALUES,
+  TOOL_KEY_VALUES,
+  ToolFamily,
+  ToolJobStatus,
+  ToolKey,
+  isTerminalToolJobStatus,
+  isToolKey,
+  toolFamilyOf,
+} from './media/tool-vocabulary.js';
+
 export { normalizeProgress } from './media/progress.js';
 export type { NormalizedProgress } from './media/progress.js';
 
