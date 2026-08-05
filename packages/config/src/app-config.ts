@@ -15,6 +15,15 @@ export interface TelegramConfig {
    * public API's 50 MB upload ceiling.
    */
   readonly useLocalApi: boolean;
+  /**
+   * Absolute directories a local Bot API server's `getFile` result may name.
+   *
+   * Empty unless {@link useLocalApi}. A local server hands us a path on ITS
+   * filesystem and we open whatever it names, so this list is the boundary that
+   * makes that safe: a path landing outside every entry is refused rather than
+   * read.
+   */
+  readonly localFileRoots: readonly string[];
 }
 
 export interface DatabaseConfig {

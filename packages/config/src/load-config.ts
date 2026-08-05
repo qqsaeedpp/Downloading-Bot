@@ -1,3 +1,4 @@
+import { posix, win32 } from 'node:path';
 import { ConfigurationError, MediaPlatform, megabytesToBytes } from '@tgtools/shared';
 import type { z } from 'zod';
 import type { AppConfig, CookieConfig, ToolsConfig } from './app-config.js';
@@ -79,6 +80,41 @@ export function resolveTelegramLimits(env: RawEnv): {
 }
 
 /**
+ * The default mount of the `aiogram/telegram-bot-api` image, which is what
+ * `docker-compose.yml` runs. A deployment that mounts the volume elsewhere sets
+ * the variable; one that follows the compose file does not have to.
+ */
+const DEFAULT_LOCAL_FILE_ROOT = '/var/lib/telegram-bot-api';
+
+/**
+ * The directories a local Bot API server's `getFile` result may name.
+ *
+ * Empty when local mode is off, and deliberately so: without a local server
+ * every `file_path` is relative and becomes a URL, so a root list would be a
+ * permission granted for no reason.
+ *
+ * Relative entries are dropped rather than resolved against the process's
+ * working directory. "Inside `data/`" means nothing when the path being checked
+ * belongs to a different container's filesystem, and a containment check
+ * against a root that is itself relative is not a check at all.
+ */
+export function resolveLocalFileRoots(raw: string | undefined, localMode: boolean): string[] {
+  if (!localMode) return [];
+  if (raw === undefined || raw.trim() === '') return [DEFAULT_LOCAL_FILE_ROOT];
+
+  const roots = raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '')
+    // Both flavours, because the Bot API server is a different machine from
+    // this one: the worker may run on Windows in development while the server
+    // it talks to is a Linux container.
+    .filter((entry) => posix.isAbsolute(entry) || win32.isAbsolute(entry));
+
+  return roots.length === 0 ? [DEFAULT_LOCAL_FILE_ROOT] : roots;
+}
+
+/**
  * Validate the environment and shape it into {@link AppConfig}.
  *
  * Throws on the first problem. Failing at startup is the point: a bot that
@@ -106,6 +142,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       botToken: env.TELEGRAM_BOT_TOKEN,
       apiRoot: env.TELEGRAM_API_ROOT,
       useLocalApi: telegram.localMode,
+      localFileRoots: resolveLocalFileRoots(env.TELEGRAM_LOCAL_FILE_ROOTS, telegram.localMode),
     },
 
     database: {

@@ -82,6 +82,20 @@ export const envSchema = z.object({
   // resolved — see `assertCoherent`.
   TELEGRAM_LOCAL_MODE: optionalBooleanFlag(),
   TELEGRAM_USE_LOCAL_API: optionalBooleanFlag(),
+  /**
+   * Where a LOCAL Bot API server keeps the files it downloads, as a
+   * comma-separated list of absolute paths.
+   *
+   * Only the tools worker reads it, and only in local mode — the downloader
+   * uploads files and never fetches one, which is why this appears only now. In
+   * local mode `getFile` answers with an absolute path on the SERVER's
+   * filesystem, and this list is what stops a misconfigured or compromised
+   * server from aiming that path at `/etc`.
+   *
+   * A list rather than a single path because the Bot API server and this worker
+   * can mount the same volume at different places.
+   */
+  TELEGRAM_LOCAL_FILE_ROOTS: optionalText(),
 
   DATABASE_URL: requiredText('DATABASE_URL'),
   DATABASE_POOL_MAX: positiveInt(10, { max: 200 }),

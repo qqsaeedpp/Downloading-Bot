@@ -4,6 +4,7 @@ import {
   LOCAL_API_UPLOAD_LIMIT_MB,
   PUBLIC_API_UPLOAD_LIMIT_MB,
   loadConfig,
+  resolveLocalFileRoots,
 } from './load-config.js';
 
 const BOT_TOKEN = '7000000000:AAF-token-for-tests';
@@ -33,7 +34,14 @@ describe('loadConfig', () => {
       environment: 'development',
       version: '0.0.0',
       logging: { level: 'info', pretty: false },
-      telegram: { botToken: BOT_TOKEN, apiRoot: undefined, useLocalApi: false },
+      telegram: {
+        botToken: BOT_TOKEN,
+        apiRoot: undefined,
+        useLocalApi: false,
+        // Empty without a local server: every `file_path` is relative and
+        // becomes a URL, so there is no filesystem to grant access to.
+        localFileRoots: [],
+      },
       database: { url: DATABASE_URL, poolMax: 10 },
       redis: { url: REDIS_URL },
       binaries: { ytDlp: 'yt-dlp', ffmpeg: 'ffmpeg', ffprobe: 'ffprobe', jsRuntime: 'deno' },
@@ -675,5 +683,43 @@ describe('file-tool coherence', () => {
     }
     expect(message).toContain('VIDEO_TOOL_MAX_MB=400');
     expect(message).toContain('PDF_TOOL_MAX_MB=300');
+  });
+});
+
+describe('the local Bot API file roots', () => {
+  it('grants nothing at all when local mode is off', () => {
+    // Without a local server every `file_path` is relative and becomes a URL,
+    // so a root list would be a filesystem permission granted for no reason.
+    expect(resolveLocalFileRoots('/var/lib/telegram-bot-api', false)).toEqual([]);
+  });
+
+  it('falls back to the path the shipped compose file mounts', () => {
+    // A deployment that follows docker-compose.yml should not have to discover
+    // this variable before its first PDF works.
+    expect(resolveLocalFileRoots(undefined, true)).toEqual(['/var/lib/telegram-bot-api']);
+    expect(resolveLocalFileRoots('   ', true)).toEqual(['/var/lib/telegram-bot-api']);
+  });
+
+  it('accepts several roots, because two containers can mount one volume differently', () => {
+    expect(resolveLocalFileRoots('/mnt/a, /mnt/b', true)).toEqual(['/mnt/a', '/mnt/b']);
+  });
+
+  it('drops a relative entry rather than resolving it', () => {
+    // The path being checked belongs to ANOTHER container's filesystem, so
+    // "inside ./data" is not a statement that can be evaluated here. A
+    // containment check against a relative root is not a check at all.
+    expect(resolveLocalFileRoots('data/files, /mnt/ok', true)).toEqual(['/mnt/ok']);
+  });
+
+  it('falls back rather than granting an empty allow-list', () => {
+    // An empty list makes `resolveTelegramFilePath` refuse every file, which
+    // presents as "Telegram is broken" rather than as a configuration mistake.
+    expect(resolveLocalFileRoots('data/files, ../up', true)).toEqual(['/var/lib/telegram-bot-api']);
+  });
+
+  it('accepts a Windows root, because the worker may run there in development', () => {
+    // The Bot API server is a different machine: a Linux container's path is
+    // absolute even when this process is on Windows, and vice versa.
+    expect(resolveLocalFileRoots('C:\\bot-api', true)).toEqual(['C:\\bot-api']);
   });
 });
