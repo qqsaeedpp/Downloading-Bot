@@ -7,3 +7,12 @@ export { downloadEvents } from './download-events.js';
 export type { DownloadEventRow, NewDownloadEventRow } from './download-events.js';
 export { mediaInspections } from './media-inspections.js';
 export type { MediaInspectionRow, NewMediaInspectionRow } from './media-inspections.js';
+export { toolJobEvents, toolJobInputs, toolJobs } from './tool-jobs.js';
+export type {
+  NewToolJobEventRow,
+  NewToolJobInputRow,
+  NewToolJobRow,
+  ToolJobEventRow,
+  ToolJobInputRow,
+  ToolJobRow,
+} from './tool-jobs.js';
