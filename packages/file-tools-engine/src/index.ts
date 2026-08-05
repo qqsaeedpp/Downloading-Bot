@@ -16,6 +16,14 @@ export {
 } from './errors/tool-error.js';
 export type { ToolErrorOptions } from './errors/tool-error.js';
 
+export {
+  claimedKindOf,
+  kindOfMimeType,
+  resolveInputKind,
+  sniffFileType,
+} from './detect/file-kind.js';
+export type { InputKind, ResolveInputKindOptions, ResolvedInput } from './detect/file-kind.js';
+
 export { runProcess, runProcessOrThrow } from './process/child-process-runner.js';
 export type { ProcessRunOptions, ProcessRunResult } from './process/child-process-runner.js';
 
