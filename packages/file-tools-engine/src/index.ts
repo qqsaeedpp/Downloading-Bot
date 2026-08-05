@@ -60,3 +60,31 @@ export type {
 
 export { SharpImageProcessor } from './image/sharp-image-processor.js';
 export type { SharpImageProcessorOptions } from './image/sharp-image-processor.js';
+
+export { MP3_QUALITY_VALUES, isMp3Quality } from './video/video-processor.js';
+export type {
+  AudioStreamInfo,
+  ExtractMp3Options,
+  Mp3Quality,
+  VideoLimits,
+  VideoMetadata,
+  VideoOperationContext,
+  VideoProcessor,
+  VideoProgressListener,
+  VideoResult,
+  VideoStreamInfo,
+} from './video/video-processor.js';
+
+export {
+  FfmpegProgressParser,
+  assertUsableVideo,
+  buildMp3Args,
+  buildProbeArgs,
+  buildRemoveAudioArgs,
+  estimateMp3Bytes,
+  mp3BitrateBps,
+  parseFfprobeJson,
+} from './video/ffmpeg-plan.js';
+
+export { FfmpegVideoProcessor } from './video/ffmpeg-video-processor.js';
+export type { FfmpegVideoProcessorOptions } from './video/ffmpeg-video-processor.js';
