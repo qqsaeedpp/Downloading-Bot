@@ -1,13 +1,14 @@
 # Deployment
 
-Production runs as seven Compose services: `postgres`, `redis`, a one-shot
-`migrate`, the two application processes `bot` and `worker`, and two supporting
-servers — `bgutil-provider` (YouTube PO tokens) and `telegram-bot-api`, the local
-Bot API server that lifts the 50 MB upload ceiling (§7). The bot receives
-updates and queues work; the worker runs yt-dlp, FFmpeg and the upload. They are
-separate images on purpose — the bot image has no writable media volume, so "the
-bot must never download" is a property of the deployment rather than a rule someone
-has to remember.
+Production runs as eight Compose services: `postgres`, `redis`, a one-shot
+`migrate`, the three application processes `bot`, `worker` and `tools-worker`,
+and two supporting servers — `bgutil-provider` (YouTube PO tokens) and
+`telegram-bot-api`, the local Bot API server that lifts the 50 MB upload ceiling
+(§7). The bot receives updates and queues work; the worker runs yt-dlp, FFmpeg
+and the upload; the tools worker processes files users send (§12), and is the one
+service you can simply not start. They are separate images on purpose — the bot
+image has no writable media volume, so "the bot must never download" is a
+property of the deployment rather than a rule someone has to remember.
 
 ## Prerequisites
 
@@ -209,13 +210,13 @@ which is `node --env-file-if-exists=.env --import tsx apps/worker/src/migrate.ts
 
 ## 4. Health endpoints
 
-Both processes serve two endpoints on `0.0.0.0`, from
+Every process serves two endpoints on `0.0.0.0`, from
 `packages/shared/src/health/health-server.ts`:
 
-| Path            | Bot  | Worker | Behaviour                                                                            |
-| --------------- | ---- | ------ | ------------------------------------------------------------------------------------ |
-| `/health/live`  | 3001 | 3002   | Always 200 with `{status, service, version, uptimeSeconds}`. The process is running. |
-| `/health/ready` | 3001 | 3002   | 200 when every check passes, 503 otherwise, with a `checks` array.                   |
+| Path            | Bot  | Worker | Tools | Behaviour                                                                            |
+| --------------- | ---- | ------ | ----- | ------------------------------------------------------------------------------------ |
+| `/health/live`  | 3001 | 3002   | 3003  | Always 200 with `{status, service, version, uptimeSeconds}`. The process is running. |
+| `/health/ready` | 3001 | 3002   | 3003  | 200 when every check passes, 503 otherwise, with a `checks` array.                   |
 
 Anything else returns 404. Readiness runs all checks in parallel under a single
 5 s budget; a check that throws is reported as `healthy: false` rather than
@@ -253,6 +254,23 @@ separator is resolved by the OS at spawn time, so there is nothing to stat.
 
 `assertExecutable` is `access(path, constants.X_OK)`; `ensureWritable` creates the
 root, makes a temporary directory in it and removes it.
+
+**Tools-worker readiness** (`apps/tools-worker/src/bootstrap.ts`) — three checks,
+and none of them is a binary:
+
+```ts
+    checks: [
+      healthCheck('postgres', () => container.database.ping()),
+      healthCheck('redis', () => container.redis.ping()),
+      // The binaries are NOT re-probed here. They are version checks that fork
+      // processes, and running them every ten seconds would spend more CPU on
+      // checking than on working. Startup is where they belong.
+      healthCheck('workspace', () => container.workspaces.ensureRoot()),
+    ],
+```
+
+FFmpeg, ffprobe, `pdftocairo`, `pdfinfo`, libmp3lame and Sharp's native binding
+are all probed **once at startup** instead, and any failure is fatal (§12).
 
 The asymmetry is deliberate and is the quickest way to confirm a correct
 deployment by hand:
@@ -622,4 +640,135 @@ To ship logs elsewhere, replace the `x-logging` anchor with your driver of choic
 | Progress messages stop updating but the job completes                                                                                          | Normal throttling, or Telegram 429s. `PROGRESS_UPDATE_INTERVAL_MS` / `PROGRESS_UPDATE_MIN_PERCENT` control the rate; `message is not modified` is classified as `not_modified` and deliberately not treated as a failure. |
 | Users see _"چند دانلود فعال دارید"_ constantly                                                                                                 | `MAX_ACTIVE_JOBS_PER_USER` (default 2), or jobs stuck in an active status because a worker died without releasing them.                                                                                                   |
 | Redis `OOM command not allowed when used memory > 'maxmemory'`                                                                                 | `noeviction` doing its job. Increase Redis memory or lower `QUEUE_REMOVE_FAIL_AFTER_SECONDS`.                                                                                                                             |
-| `docker compose exec bot curl …` connection refused                                                                                            | Health server not up yet, or you used the wrong port — the bot is 3001 and the worker is 3002.                                                                                                                            |
+| `docker compose exec bot curl …` connection refused                                                                                            | Health server not up yet, or you used the wrong port — the bot is 3001, the worker 3002 and the tools worker 3003.                                                                                                        |
+| `tools-worker` exits **78** immediately and `restart: unless-stopped` loops it                                                                 | `TOOLS_ENABLED` is false while the service is running. Set it true, or stop the service (§12).                                                                                                                            |
+| `fatal: tools-worker failed to start: … native dependencies are unusable`                                                                      | The startup toolchain probe failed. The `toolchain component unusable` lines name which one (§12).                                                                                                                        |
+
+## 12. The tools worker (optional)
+
+`tools-worker` is the third application process, built from `Dockerfile.tools`,
+and the one service a deployment can simply not start. It drains four queues —
+`tool-image`, `tool-video`, `tool-pdf` and `tool-qr` — and does file processing
+only: everything it does begins with a file a user already sent. Full detail is
+in [media-tools.md](./media-tools.md).
+
+It is a separate process from `worker` for a different reason than `bot` is. The
+two contend for different resources: a fifty-page render or a 4K resize wants a
+core flat out, where a download wants bandwidth and a socket held open. Sharing
+one worker would mean one user's PDF delaying everyone's videos, and the
+concurrency that is right for downloads is wrong for both.
+
+The image carries FFmpeg and `poppler-utils` and **no yt-dlp, no Deno, no
+python3, no curl** — those exist purely to fetch from the public internet, which
+this process never does. Leaving them out makes "the tools process cannot be
+talked into fetching an arbitrary URL" a property of the image.
+
+### It refuses to start when switched off
+
+```
+tools-worker: TOOLS_ENABLED is false, so this process has nothing to do.
+Set TOOLS_ENABLED=true, or stop running this service.
+```
+
+**Exit code 78** (`EX_CONFIG`). Refusing is the honest answer to being switched
+off: a process that boots and drains no queues looks healthy to an orchestrator
+while every user's job sits in Redis forever. Because the service carries
+`restart: unless-stopped`, that refusal becomes a crash loop until you either set
+the variable or stop the service.
+
+`TOOLS_ENABLED` lives in the `x-app-env` anchor, so it has **one value for all
+three processes**, defaulting to `false` exactly as the schema does. Setting it
+per-service was tried and abandoned: the bot reads these settings too — it builds
+its menu from the family switches and enforces `MAX_ACTIVE_TOOL_JOBS_PER_USER`
+before queueing — and the coherence rules run at startup in every process. Two
+sets of ceilings mean the same `.env` boots one container and stops the next,
+which is a worse failure than a crash loop because it presents as a bug in one
+image rather than as a disagreement between two.
+
+There is no `profiles:` convention in the file to gate the service on, and
+inventing one here would leave the other optional services (`bgutil-provider`,
+`telegram-bot-api`) gated differently. So the way to run without the tools is to
+not start the service:
+
+```bash
+docker compose up -d postgres redis bot worker
+```
+
+It also refuses to start if `TOOLS_ENABLED` is true but all four family switches
+are off, because then no queue would be drained at all. Turning off a single
+family is fine — that queue simply gets no consumer, and its jobs wait in Redis
+rather than failing.
+
+### The toolchain probe
+
+Before any queue is touched, the process probes FFmpeg, ffprobe, `pdftocairo`,
+`pdfinfo`, **libmp3lame inside FFmpeg**, Sharp's native binding (via a real 1×1
+encode) and the workspace's writability. Any failure is fatal — unlike a missing
+cookie file there is no degraded mode here, and half the tools accepting work and
+failing every job is worse than not accepting it.
+
+libmp3lame is checked as an encoder rather than as a binary because an FFmpeg
+built without it runs fine and then fails every "video to MP3" job with an
+unknown-encoder error, which reads as a bug in this code rather than a gap in the
+image. Sharp is loaded rather than imported because its binding resolves lazily,
+so a musl/glibc mismatch only surfaces on first use.
+
+```bash
+docker compose logs tools-worker | grep toolchain
+```
+
+### Ports and volumes
+
+The health port is **3003**, published to loopback only, exactly like the other
+two: `127.0.0.1:${TOOLS_WORKER_HEALTH_PORT:-3003}:3003`.
+
+```bash
+curl -fsS http://127.0.0.1:3003/health/ready | jq
+```
+
+Two volumes, and the split matters:
+
+```yaml
+volumes:
+  - tools-workspace:/data/tools
+  - telegram-bot-api-data:/var/lib/telegram-bot-api:ro
+```
+
+- **`tools-workspace`, its own scratch space** — not the downloader's `downloads`
+  volume. The two sweep for orphans independently, so a shared directory would
+  let one delete the other's in-flight files. The config layer refuses
+  `TOOL_WORKSPACE_DIR == DOWNLOAD_DIR` outright rather than leaving that to
+  chance. `TOOL_WORKSPACE_DIR` is fixed at `/data/tools` in the compose file
+  rather than interpolated, for the same reason `DOWNLOAD_DIR` is: it names a
+  mount point inside the container, and a value from someone's `.env` would point
+  at a path the volume is not mounted on.
+- **The Bot API server's storage, read-only.** This is the one process that reads
+  what that server wrote. With `TELEGRAM_LOCAL_MODE` on, `getFile` answers with an
+  absolute path on the server's own disk instead of a URL, and sharing the volume
+  is what makes that path openable from here. The fetcher copies the file into the
+  job workspace rather than working on it in place — the Bot API server deletes
+  its copy whenever it likes, and a transcode reading straight from that directory
+  would race the deletion — so nothing here ever needs to write, and `:ro` makes
+  damaging the server's storage impossible.
+
+  The mount point is the default local file root, so a deployment that follows
+  this file sets no `TELEGRAM_LOCAL_FILE_ROOTS`. It is harmless without local
+  mode: the roots list is empty then, every file arrives over HTTPS, and the mount
+  is never read.
+
+There is **no `./secrets` mount**, unlike `bot` and `worker`. Cookie files exist
+for yt-dlp, and this process never fetches from anywhere but Telegram.
+
+`depends_on` includes `migrate: service_completed_successfully` — `tool_jobs`
+arrives in `0002_add_tool_jobs.sql`, and without it every job fails on its first
+insert. `stop_grace_period` is 90 s, which must exceed the shutdown deadline the
+process sets itself (`WORKER_SHUTDOWN_GRACE_MS + 30 s`, so 60 s at the defaults);
+Docker would otherwise SIGKILL a container that was still letting a render
+finish.
+
+### Disk
+
+Budget the `tools-workspace` volume for the largest concurrent set of in-flight
+jobs, plus `TOOL_MIN_FREE_DISK_MB` headroom. Rendering a PDF to images is the
+case that surprises people: fifty pages at 150 DPI is fifty full-size PNGs on
+disk at once, which dwarfs the 20 MB input that produced them.

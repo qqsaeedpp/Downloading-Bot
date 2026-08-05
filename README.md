@@ -37,26 +37,41 @@ second and tenth tool as much as for this one.
   process boundary.
 - **Two-tier size limits**, per-job workspaces, graceful shutdown, health
   endpoints and structured logs with per-request correlation.
+- **Eight file tools**, behind `TOOLS_ENABLED` and **off by default**: compress,
+  resize and convert an image; pull an MP3 out of a video or strip its audio;
+  build a PDF from images or render one back to images; generate a QR code. They
+  run in their own process on their own queues, because a fifty-page render wants
+  a core for a minute where a download wants bandwidth. See
+  [docs/media-tools.md](./docs/media-tools.md) — including what in that pipeline
+  has not yet been run.
 
 ---
 
 ## Architecture at a glance
 
 ```
-Telegram ──▶ apps/bot ──BullMQ──▶ apps/worker ──▶ Telegram
-                 │                     │
-                 └──── PostgreSQL ─────┘
-                        Redis
+Telegram ──▶ apps/bot ──BullMQ──▶ apps/worker       ──▶ Telegram
+                 │       (downloads)
+                 ├──BullMQ──▶ apps/tools-worker     ──▶ Telegram
+                 │            (file processing, optional)
+                 └──── PostgreSQL ────────────────────┘
+                              Redis
 ```
 
 The bot receives updates and queues work. The worker runs yt-dlp, FFmpeg and the
 upload. They are separate processes because a single 400 MB download inside the
 bot would block every other user's update for as long as it ran.
 
+The tools worker is a third process, and only runs when `TOOLS_ENABLED` is on.
+It is separate from the downloader worker for a different reason: the two
+contend for different resources — a render wants a core, a download wants
+bandwidth — so sharing one worker would mean one user's PDF delaying everyone's
+videos.
+
 ```
-apps/          bot and worker processes (composition roots)
-features/      vertical slices: downloader, start, help, users
-packages/      shared plumbing: config, logger, database, queue, telegram, engine
+apps/          bot, worker and tools-worker processes (composition roots)
+features/      vertical slices: downloader, tools, start, help, users
+packages/      shared plumbing: config, logger, database, queue, telegram, engines
 infra/         SQL migrations
 docs/          the documents listed at the bottom of this file
 tests/         integration, e2e, and the opt-in smoke suite
@@ -74,14 +89,19 @@ rejected, is in [docs/architecture.md](./docs/architecture.md).
 
 ## Requirements
 
-|                  | Version          | Notes                                   |
-| ---------------- | ---------------- | --------------------------------------- |
-| Node.js          | 22+              | 24 also works for local development     |
-| Docker + Compose | recent           | the only supported production path      |
-| PostgreSQL       | 17               | provided by Compose                     |
-| Redis            | 7                | provided by Compose                     |
-| yt-dlp           | pinned per image | see [updating yt-dlp](#updating-yt-dlp) |
-| FFmpeg + ffprobe | any current      | worker image only; the bot has neither  |
+|                  | Version          | Notes                                       |
+| ---------------- | ---------------- | ------------------------------------------- |
+| Node.js          | 22+              | 24 also works for local development         |
+| Docker + Compose | recent           | the only supported production path          |
+| PostgreSQL       | 17               | provided by Compose                         |
+| Redis            | 7                | provided by Compose                         |
+| yt-dlp           | pinned per image | see [updating yt-dlp](#updating-yt-dlp)     |
+| FFmpeg + ffprobe | any current      | worker image only; the bot has neither      |
+| poppler-utils    | any current      | tools worker only — `pdftocairo`, `pdfinfo` |
+
+The tools worker needs FFmpeg (built with libmp3lame) and `poppler-utils`; it
+needs neither yt-dlp nor Deno, which exist only to fetch from the internet. It
+probes all of them at startup and refuses to run if any is missing.
 
 ---
 
@@ -339,6 +359,7 @@ More in [docs/deployment.md](./docs/deployment.md).
 | --------------------------------------------------- | --------------------------------------------------- |
 | [architecture.md](./docs/architecture.md)           | layers, package map, and the architecture decisions |
 | [downloader-flow.md](./docs/downloader-flow.md)     | what happens at each step, and why                  |
+| [media-tools.md](./docs/media-tools.md)             | the eight file tools, their queues and ceilings     |
 | [error-model.md](./docs/error-model.md)             | how a failure becomes a sentence                    |
 | [security.md](./docs/security.md)                   | SSRF, injection, secrets, privacy                   |
 | [deployment.md](./docs/deployment.md)               | production operation and troubleshooting            |
