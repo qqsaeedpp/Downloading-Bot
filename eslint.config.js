@@ -183,12 +183,15 @@ export default tseslint.config(
 
   // ── Relaxations ───────────────────────────────────────────────────────────
   {
-    // The three places that legitimately touch `process`: the config loader
-    // reads the environment, the shutdown handler installs signal listeners and
-    // calls `exit`, and each app's entry point reports a startup failure to
-    // stderr before a logger exists.
+    // The places that legitimately touch `process`: the config loader reads the
+    // environment, the shutdown handler installs signal listeners and calls
+    // `exit`, each app's entry point reports a startup failure to stderr before
+    // a logger exists, and the child-process runner needs `process.platform`
+    // and `process.kill` — OS primitives with no config-shaped alternative, and
+    // not what this rule is aimed at.
     files: [
       'packages/config/src/**/*.ts',
+      'packages/file-tools-engine/src/process/child-process-runner.ts',
       'packages/shared/src/lifecycle/**/*.ts',
       'apps/*/src/bootstrap.ts',
       'apps/*/src/migrate.ts',
