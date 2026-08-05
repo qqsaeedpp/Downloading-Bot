@@ -121,3 +121,88 @@ export const TERMINAL_TOOL_JOB_STATUSES: readonly ToolJobStatus[] = [
 export function isTerminalToolJobStatus(status: ToolJobStatus): boolean {
   return TERMINAL_TOOL_JOB_STATUSES.includes(status);
 }
+
+/**
+ * Every way a tool job can fail, as a closed set.
+ *
+ * Here rather than beside the `ToolError` class that throws it, because the CODE
+ * outlives the throw: it is written to `tool_jobs.error_code`, read back by the
+ * bot to explain a finished job, and translated into Persian by the presentation
+ * layer. Three consumers, only one of which runs the engine.
+ *
+ * That distinction is load-bearing. `@tgtools/file-tools-engine` loads Sharp's
+ * native binding at import, so a bot that needed this enum in order to render a
+ * sentence would be linking libvips to do it. The class stays in the engine; the
+ * vocabulary lives here, where `@tgtools/shared`'s zero-dependency rule makes it
+ * free to import from anywhere.
+ */
+export const ToolErrorCode = {
+  /** The user's file is larger than this deployment can even fetch. */
+  InputTooLarge: 'TOOL_INPUT_TOO_LARGE',
+  /** What we produced cannot be sent. Known before the upload is attempted. */
+  OutputTooLarge: 'TOOL_OUTPUT_TOO_LARGE',
+  UnsupportedFileType: 'UNSUPPORTED_FILE_TYPE',
+  /**
+   * What Telegram declared and what the bytes actually are disagree.
+   *
+   * Its own code rather than folded into `UNSUPPORTED_FILE_TYPE` because the
+   * two mean different things to an operator: one is a user sending something
+   * we do not handle, the other is a file whose extension lies — which is worth
+   * noticing.
+   */
+  MimeMismatch: 'MIME_MISMATCH',
+
+  InvalidImage: 'INVALID_IMAGE',
+  /** A decompression bomb: a small file declaring an enormous canvas. */
+  ImageTooManyPixels: 'IMAGE_TOO_MANY_PIXELS',
+  AnimatedImageUnsupported: 'ANIMATED_IMAGE_UNSUPPORTED',
+
+  InvalidVideo: 'INVALID_VIDEO',
+  VideoHasNoAudio: 'VIDEO_HAS_NO_AUDIO',
+  VideoAlreadyMuted: 'VIDEO_ALREADY_MUTED',
+  VideoTooLong: 'VIDEO_TOO_LONG',
+
+  InvalidPdf: 'INVALID_PDF',
+  PdfEncrypted: 'PDF_ENCRYPTED',
+  PdfTooManyPages: 'PDF_TOO_MANY_PAGES',
+  InvalidPageRange: 'INVALID_PAGE_RANGE',
+
+  QrInputTooLong: 'QR_INPUT_TOO_LONG',
+
+  DiskSpaceLow: 'DISK_SPACE_LOW',
+  ToolTimeout: 'TOOL_TIMEOUT',
+  ToolCancelled: 'TOOL_CANCELLED',
+  TelegramFileUnavailable: 'TELEGRAM_FILE_UNAVAILABLE',
+  TelegramUploadFailed: 'TELEGRAM_UPLOAD_FAILED',
+  /** ffmpeg, pdftocairo or pdfinfo exited non-zero for a reason we did not model. */
+  ExternalToolFailed: 'EXTERNAL_TOOL_FAILED',
+  InternalError: 'INTERNAL_ERROR',
+} as const;
+export type ToolErrorCode = (typeof ToolErrorCode)[keyof typeof ToolErrorCode];
+
+export const ALL_TOOL_ERROR_CODES: readonly ToolErrorCode[] = Object.freeze(
+  Object.values(ToolErrorCode),
+);
+
+export function isToolErrorCode(value: string): value is ToolErrorCode {
+  return (ALL_TOOL_ERROR_CODES as readonly string[]).includes(value);
+}
+
+/**
+ * Which failures are worth a second attempt.
+ *
+ * The default is NO. Retrying a corrupt PDF, an encrypted one, a video with no
+ * audio track or an oversized input burns the same CPU to reach the same
+ * answer, and on a shared worker that is capacity taken from someone whose job
+ * would have succeeded. Only genuinely transient conditions are listed.
+ */
+const RETRYABLE_CODES: ReadonlySet<ToolErrorCode> = new Set([
+  ToolErrorCode.DiskSpaceLow,
+  ToolErrorCode.TelegramFileUnavailable,
+  ToolErrorCode.TelegramUploadFailed,
+  ToolErrorCode.InternalError,
+]);
+
+export function isRetryableToolError(code: ToolErrorCode): boolean {
+  return RETRYABLE_CODES.has(code);
+}

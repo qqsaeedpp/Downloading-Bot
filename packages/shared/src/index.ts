@@ -39,16 +39,20 @@ export {
 export type { DownloadProgress, VideoDeliveryMode } from './media/vocabulary.js';
 
 export {
+  ALL_TOOL_ERROR_CODES,
   ALL_TOOL_FAMILIES,
   ALL_TOOL_KEYS,
   TERMINAL_TOOL_JOB_STATUSES,
   TOOL_FAMILY_VALUES,
   TOOL_JOB_STATUS_VALUES,
   TOOL_KEY_VALUES,
+  ToolErrorCode,
   ToolFamily,
   ToolJobStatus,
   ToolKey,
+  isRetryableToolError,
   isTerminalToolJobStatus,
+  isToolErrorCode,
   isToolKey,
   toolFamilyOf,
 } from './media/tool-vocabulary.js';

@@ -1,74 +1,19 @@
+import { ToolErrorCode, isRetryableToolError } from '@tgtools/shared';
+
 /**
- * Every way a tool job can fail, as a closed set.
- *
  * Two audiences, deliberately separated. The CODE drives behaviour — whether to
  * retry, what to tell the user, which metric to move — and the raw cause stays
  * in the log. A user who sends a corrupt PDF should read one clear sentence in
  * Persian, not a poppler stack trace; and an operator debugging the same event
  * needs the stack trace, not the sentence.
- */
-export const ToolErrorCode = {
-  /** The user's file is larger than this deployment can even fetch. */
-  InputTooLarge: 'TOOL_INPUT_TOO_LARGE',
-  /** What we produced cannot be sent. Known before the upload is attempted. */
-  OutputTooLarge: 'TOOL_OUTPUT_TOO_LARGE',
-  UnsupportedFileType: 'UNSUPPORTED_FILE_TYPE',
-  /**
-   * What Telegram declared and what the bytes actually are disagree.
-   *
-   * Its own code rather than folded into `UNSUPPORTED_FILE_TYPE` because the
-   * two mean different things to an operator: one is a user sending something
-   * we do not handle, the other is a file whose extension lies — which is worth
-   * noticing.
-   */
-  MimeMismatch: 'MIME_MISMATCH',
-
-  InvalidImage: 'INVALID_IMAGE',
-  /** A decompression bomb: a small file declaring an enormous canvas. */
-  ImageTooManyPixels: 'IMAGE_TOO_MANY_PIXELS',
-  AnimatedImageUnsupported: 'ANIMATED_IMAGE_UNSUPPORTED',
-
-  InvalidVideo: 'INVALID_VIDEO',
-  VideoHasNoAudio: 'VIDEO_HAS_NO_AUDIO',
-  VideoAlreadyMuted: 'VIDEO_ALREADY_MUTED',
-  VideoTooLong: 'VIDEO_TOO_LONG',
-
-  InvalidPdf: 'INVALID_PDF',
-  PdfEncrypted: 'PDF_ENCRYPTED',
-  PdfTooManyPages: 'PDF_TOO_MANY_PAGES',
-  InvalidPageRange: 'INVALID_PAGE_RANGE',
-
-  QrInputTooLong: 'QR_INPUT_TOO_LONG',
-
-  DiskSpaceLow: 'DISK_SPACE_LOW',
-  ToolTimeout: 'TOOL_TIMEOUT',
-  ToolCancelled: 'TOOL_CANCELLED',
-  TelegramFileUnavailable: 'TELEGRAM_FILE_UNAVAILABLE',
-  TelegramUploadFailed: 'TELEGRAM_UPLOAD_FAILED',
-  /** ffmpeg, pdftocairo or pdfinfo exited non-zero for a reason we did not model. */
-  ExternalToolFailed: 'EXTERNAL_TOOL_FAILED',
-  InternalError: 'INTERNAL_ERROR',
-} as const;
-export type ToolErrorCode = (typeof ToolErrorCode)[keyof typeof ToolErrorCode];
-
-/**
- * Which failures are worth a second attempt.
  *
- * The default is NO. Retrying a corrupt PDF, an encrypted one, a video with no
- * audio track or an oversized input burns the same CPU to reach the same
- * answer, and on a shared worker that is capacity taken from someone whose job
- * would have succeeded. Only genuinely transient conditions are listed.
+ * The vocabulary itself moved to `@tgtools/shared`, and is re-exported here so
+ * that every existing import still resolves. It had to move because the bot
+ * translates these codes into Persian and the bot must never load this package —
+ * importing it pulls in Sharp's native binding, which is 40 MB of libvips in the
+ * one process that has no pixels to decode.
  */
-const RETRYABLE_CODES: ReadonlySet<ToolErrorCode> = new Set([
-  ToolErrorCode.DiskSpaceLow,
-  ToolErrorCode.TelegramFileUnavailable,
-  ToolErrorCode.TelegramUploadFailed,
-  ToolErrorCode.InternalError,
-]);
-
-export function isRetryableToolError(code: ToolErrorCode): boolean {
-  return RETRYABLE_CODES.has(code);
-}
+export { ToolErrorCode, isRetryableToolError };
 
 export interface ToolErrorOptions {
   /** Structured, already-safe context for the log. Never raw tool output. */
