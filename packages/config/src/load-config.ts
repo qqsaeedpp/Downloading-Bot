@@ -1,6 +1,6 @@
 import { ConfigurationError, MediaPlatform, megabytesToBytes } from '@tgtools/shared';
 import type { z } from 'zod';
-import type { AppConfig, CookieConfig } from './app-config.js';
+import type { AppConfig, CookieConfig, ToolsConfig } from './app-config.js';
 import { envSchema } from './env.schema.js';
 import type { RawEnv } from './env.schema.js';
 
@@ -16,6 +16,15 @@ export const PUBLIC_API_UPLOAD_LIMIT_MB = 50;
  * streamed — the most expensive possible moment to discover it.
  */
 export const LOCAL_API_UPLOAD_LIMIT_MB = 1_900;
+
+/**
+ * What a bot may DOWNLOAD from the public Bot API.
+ *
+ * Not the same number as the upload ceiling, and smaller: `getFile` refuses
+ * anything above 20 MB regardless of what the bot is allowed to send. A tool
+ * input limit above this promises to accept files the bot could never collect.
+ */
+export const PUBLIC_API_DOWNLOAD_LIMIT_MB = 20;
 
 /**
  * One setting, two spellings.
@@ -176,6 +185,8 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       potProviderUrl: env.YOUTUBE_POT_PROVIDER_URL,
     },
 
+    tools: buildToolsConfig(env),
+
     health: {
       botPort: env.BOT_HEALTH_PORT,
       workerPort: env.WORKER_HEALTH_PORT,
@@ -188,6 +199,60 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     maintenance: {
       intervalMs: env.MAINTENANCE_INTERVAL_MS,
     },
+  };
+}
+
+function buildToolsConfig(env: RawEnv): ToolsConfig {
+  return {
+    enabled: env.TOOLS_ENABLED,
+    imageEnabled: env.IMAGE_TOOLS_ENABLED,
+    videoEnabled: env.VIDEO_TOOLS_ENABLED,
+    pdfEnabled: env.PDF_TOOLS_ENABLED,
+    qrEnabled: env.QR_TOOLS_ENABLED,
+
+    sessionTtlSeconds: env.TOOL_SESSION_TTL_SECONDS,
+    workspaceDir: env.TOOL_WORKSPACE_DIR,
+    minFreeDiskBytes: megabytesToBytes(env.TOOL_MIN_FREE_DISK_MB),
+    jobTimeoutMs: env.TOOL_JOB_TIMEOUT_MS,
+    uploadTimeoutMs: env.TOOL_UPLOAD_TIMEOUT_MS,
+
+    image: {
+      maxInputBytes: megabytesToBytes(env.IMAGE_TOOL_MAX_MB),
+      maxPixels: env.IMAGE_TOOL_MAX_PIXELS,
+      maxDimension: env.IMAGE_TOOL_MAX_DIMENSION,
+      concurrency: env.IMAGE_TOOL_CONCURRENCY,
+    },
+    video: {
+      maxInputBytes: megabytesToBytes(env.VIDEO_TOOL_MAX_MB),
+      maxDurationSeconds: env.VIDEO_TOOL_MAX_DURATION_SECONDS,
+      concurrency: env.VIDEO_TOOL_CONCURRENCY,
+      timeoutMs: env.VIDEO_TOOL_TIMEOUT_MS,
+    },
+    pdf: {
+      maxInputBytes: megabytesToBytes(env.PDF_TOOL_MAX_MB),
+      maxPages: env.PDF_TOOL_MAX_PAGES,
+      maxImages: env.PDF_TOOL_MAX_IMAGES,
+      renderDpi: env.PDF_RENDER_DPI,
+      concurrency: env.PDF_TOOL_CONCURRENCY,
+      timeoutMs: env.PDF_TOOL_TIMEOUT_MS,
+    },
+    qr: {
+      maxInputBytes: env.QR_MAX_INPUT_BYTES,
+      concurrency: env.QR_TOOL_CONCURRENCY,
+      timeoutMs: env.QR_TOOL_TIMEOUT_MS,
+    },
+
+    queue: {
+      attempts: env.TOOL_QUEUE_JOB_ATTEMPTS,
+      backoffMs: env.TOOL_QUEUE_BACKOFF_MS,
+      lockDurationMs: env.TOOL_QUEUE_LOCK_DURATION_MS,
+    },
+
+    orphanWorkspaceMaxAgeHours: env.TOOL_ORPHAN_WORKSPACE_MAX_AGE_HOURS,
+    maintenanceIntervalMs: env.TOOL_MAINTENANCE_INTERVAL_MS,
+    maxActiveJobsPerUser: env.MAX_ACTIVE_TOOL_JOBS_PER_USER,
+    progressUpdateIntervalMs: env.TOOL_PROGRESS_UPDATE_INTERVAL_MS,
+    healthPort: env.TOOLS_WORKER_HEALTH_PORT,
   };
 }
 
@@ -271,6 +336,90 @@ function assertCoherent(env: RawEnv): void {
       `JOB_TIMEOUT_MS=${env.JOB_TIMEOUT_MS} is smaller than the sum of its step timeouts ` +
         `(${stepBudget}ms). The job would be killed before its slowest legal path completes.`,
     );
+  }
+
+  // ── File tools ─────────────────────────────────────────────────────────
+  // Only checked when the tools are on: a downloader-only deployment should not
+  // be refused startup over a ceiling it will never reach.
+  if (env.TOOLS_ENABLED) {
+    // The family ceilings are INPUT limits — the largest file a user may send —
+    // and are deliberately NOT compared against the upload ceiling: a 500 MB
+    // video that yields a 5 MB MP3 is the entire point of the tool. What they
+    // must fit under is what this deployment can FETCH, which is a different
+    // number: the public Bot API refuses `getFile` above 20 MB whatever the
+    // upload ceiling says, so a larger limit here promises something the bot
+    // cannot collect.
+    const fetchCeilingMb = telegram.localMode
+      ? telegram.uploadLimitMb
+      : PUBLIC_API_DOWNLOAD_LIMIT_MB;
+    for (const [name, mb] of [
+      ['IMAGE_TOOL_MAX_MB', env.IMAGE_TOOL_MAX_MB],
+      ['VIDEO_TOOL_MAX_MB', env.VIDEO_TOOL_MAX_MB],
+      ['PDF_TOOL_MAX_MB', env.PDF_TOOL_MAX_MB],
+    ] as const) {
+      if (mb > fetchCeilingMb) {
+        problems.push(
+          `${name}=${String(mb)} is above the ${String(fetchCeilingMb)} MB this deployment can ` +
+            `download from Telegram, so the bot could never collect a file that large. ` +
+            `Lower it, or run a local Bot API server.`,
+        );
+      }
+    }
+
+    // Each family's timeout has to fit inside the overall job budget, or a job
+    // is abandoned while a healthy conversion is still running.
+    for (const [name, ms] of [
+      ['VIDEO_TOOL_TIMEOUT_MS', env.VIDEO_TOOL_TIMEOUT_MS],
+      ['PDF_TOOL_TIMEOUT_MS', env.PDF_TOOL_TIMEOUT_MS],
+      ['QR_TOOL_TIMEOUT_MS', env.QR_TOOL_TIMEOUT_MS],
+    ] as const) {
+      if (ms > env.TOOL_JOB_TIMEOUT_MS) {
+        problems.push(
+          `${name}=${String(ms)} exceeds TOOL_JOB_TIMEOUT_MS=${String(env.TOOL_JOB_TIMEOUT_MS)}; ` +
+            `the job would be abandoned while the tool was still working.`,
+        );
+      }
+    }
+
+    // BullMQ renews a lock at lockDuration/2 while the processor is alive, so
+    // the lock is meant to be far SHORTER than a step, not longer. One that
+    // outlives the work stops a stalled job from ever being reclaimed.
+    const longestStep = Math.max(env.VIDEO_TOOL_TIMEOUT_MS, env.PDF_TOOL_TIMEOUT_MS);
+    if (env.TOOL_QUEUE_LOCK_DURATION_MS >= longestStep) {
+      problems.push(
+        `TOOL_QUEUE_LOCK_DURATION_MS=${String(env.TOOL_QUEUE_LOCK_DURATION_MS)} is not shorter ` +
+          `than the longest tool step (${String(longestStep)} ms). It is renewed while the ` +
+          `processor runs, so it should be far smaller, not larger.`,
+      );
+    }
+
+    // Deliberately NO rule relating IMAGE_TOOL_MAX_DIMENSION to
+    // IMAGE_TOOL_MAX_PIXELS. They guard different things — one an absurd single
+    // side, the other total decoded area — and requiring a SQUARE at the
+    // dimension ceiling to fit under the pixel ceiling would forbid ordinary
+    // configurations: a 12000x2000 panorama is 24 megapixels and entirely
+    // reasonable, while 12000 squared is 144.
+
+    // An A4 page rendered at the configured DPI is what "PDF to images"
+    // actually produces. If one page cannot pass the image pixel ceiling, every
+    // rendered page is rejected — after the render has already been paid for.
+    const a4PixelsAtDpi =
+      Math.round(8.27 * env.PDF_RENDER_DPI) * Math.round(11.69 * env.PDF_RENDER_DPI);
+    if (a4PixelsAtDpi > env.IMAGE_TOOL_MAX_PIXELS) {
+      problems.push(
+        `PDF_RENDER_DPI=${String(env.PDF_RENDER_DPI)} renders an A4 page at about ` +
+          `${String(a4PixelsAtDpi)} pixels, over IMAGE_TOOL_MAX_PIXELS=` +
+          `${String(env.IMAGE_TOOL_MAX_PIXELS)}; every rendered page would then be rejected.`,
+      );
+    }
+
+    if (env.TOOL_WORKSPACE_DIR === env.DOWNLOAD_DIR) {
+      problems.push(
+        `TOOL_WORKSPACE_DIR and DOWNLOAD_DIR are both "${env.TOOL_WORKSPACE_DIR}". The two have ` +
+          `independent cleanup sweeps, so sharing a directory means one can delete the other's ` +
+          `in-flight files.`,
+      );
+    }
   }
 
   if (problems.length > 0) {

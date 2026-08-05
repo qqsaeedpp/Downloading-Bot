@@ -190,6 +190,72 @@ export const envSchema = z.object({
   PINTEREST_EXTRACTOR_ARGS: optionalText(),
   YOUTUBE_EXTRACTOR_ARGS: optionalText(),
 
+  // ── File tools ─────────────────────────────────────────────────────────
+  // The eight image/video/PDF/QR operations, all behind one master switch so a
+  // deployment that only wants the downloader pays nothing for them and cannot
+  // be broken by them.
+  TOOLS_ENABLED: booleanFlag(false),
+  IMAGE_TOOLS_ENABLED: booleanFlag(true),
+  VIDEO_TOOLS_ENABLED: booleanFlag(true),
+  PDF_TOOLS_ENABLED: booleanFlag(true),
+  QR_TOOLS_ENABLED: booleanFlag(true),
+
+  // How long a half-finished conversation survives. Long enough to find and
+  // send a file, short enough that an abandoned draft does not hold a user's
+  // one active slot until they notice.
+  TOOL_SESSION_TTL_SECONDS: positiveInt(900, { min: 60, max: 86_400 }),
+
+  TOOL_WORKSPACE_DIR: z.string().trim().min(1).default('/data/tools'),
+  TOOL_MIN_FREE_DISK_MB: positiveInt(2_048, { min: 0 }),
+  TOOL_JOB_TIMEOUT_MS: positiveInt(3_600_000, { min: 10_000 }),
+  TOOL_UPLOAD_TIMEOUT_MS: positiveInt(900_000, { min: 10_000 }),
+
+  // Per-family ceilings. Split rather than shared because the resources differ
+  // by orders of magnitude: a 12000x12000 image and a two-hour video fail for
+  // completely different reasons and at completely different sizes.
+  // 20, not 50: the public Bot API refuses `getFile` above 20 MB, so a larger
+  // default would promise to accept files the bot could never collect. Raise
+  // these three once a local Bot API server is in play — see the coherence
+  // rule, which checks them against what THIS deployment can actually fetch.
+  IMAGE_TOOL_MAX_MB: positiveInt(20, { min: 1, max: 2_000 }),
+  // Guards against a decompression bomb: a few-kilobyte PNG can declare a
+  // canvas large enough to exhaust the host's memory when decoded.
+  IMAGE_TOOL_MAX_PIXELS: positiveInt(60_000_000, { min: 1_000_000 }),
+  IMAGE_TOOL_MAX_DIMENSION: positiveInt(12_000, { min: 16 }),
+  IMAGE_TOOL_CONCURRENCY: positiveInt(3, { min: 1, max: 32 }),
+
+  VIDEO_TOOL_MAX_MB: positiveInt(20, { min: 1, max: 4_000 }),
+  VIDEO_TOOL_MAX_DURATION_SECONDS: positiveInt(7_200, { min: 1 }),
+  // One by default and deliberately: FFmpeg already saturates the cores it is
+  // given, so a second concurrent transcode makes both slower, not the pair
+  // faster.
+  VIDEO_TOOL_CONCURRENCY: positiveInt(1, { min: 1, max: 8 }),
+  VIDEO_TOOL_TIMEOUT_MS: positiveInt(1_800_000, { min: 10_000 }),
+
+  PDF_TOOL_MAX_MB: positiveInt(20, { min: 1, max: 2_000 }),
+  PDF_TOOL_MAX_PAGES: positiveInt(50, { min: 1, max: 5_000 }),
+  PDF_TOOL_MAX_IMAGES: positiveInt(50, { min: 1, max: 500 }),
+  PDF_RENDER_DPI: positiveInt(150, { min: 36, max: 600 }),
+  PDF_TOOL_CONCURRENCY: positiveInt(1, { min: 1, max: 8 }),
+  PDF_TOOL_TIMEOUT_MS: positiveInt(900_000, { min: 10_000 }),
+
+  // A QR is milliseconds of work, so it gets the highest concurrency and the
+  // shortest timeout of the four.
+  QR_MAX_INPUT_BYTES: positiveInt(1_500, { min: 16, max: 7_089 }),
+  QR_TOOL_CONCURRENCY: positiveInt(4, { min: 1, max: 32 }),
+  QR_TOOL_TIMEOUT_MS: positiveInt(30_000, { min: 1_000 }),
+
+  TOOL_QUEUE_JOB_ATTEMPTS: positiveInt(2, { min: 1, max: 10 }),
+  TOOL_QUEUE_BACKOFF_MS: positiveInt(5_000, { min: 100 }),
+  TOOL_QUEUE_LOCK_DURATION_MS: positiveInt(60_000, { min: 10_000 }),
+
+  TOOL_ORPHAN_WORKSPACE_MAX_AGE_HOURS: positiveInt(6, { min: 1, max: 168 }),
+  TOOL_MAINTENANCE_INTERVAL_MS: positiveInt(900_000, { min: 60_000 }),
+  MAX_ACTIVE_TOOL_JOBS_PER_USER: positiveInt(2, { min: 1, max: 20 }),
+  TOOL_PROGRESS_UPDATE_INTERVAL_MS: positiveInt(3_000, { min: 500 }),
+
+  TOOLS_WORKER_HEALTH_PORT: positiveInt(3_003, { min: 1, max: 65_535 }),
+
   BOT_HEALTH_PORT: positiveInt(3_001, { min: 1, max: 65_535 }),
   WORKER_HEALTH_PORT: positiveInt(3_002, { min: 1, max: 65_535 }),
 

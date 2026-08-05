@@ -74,6 +74,47 @@ describe('loadConfig', () => {
       ffmpeg: { videoCodec: 'libx264', audioCodec: 'aac', preset: 'veryfast', crf: 23 },
       cookies: {},
       extraction: { proxyUrl: undefined, extractorArgs: {}, potProviderUrl: undefined },
+      // Off by default: a downloader-only deployment runs no image or video
+      // processing and cannot be broken by it.
+      tools: {
+        enabled: false,
+        imageEnabled: true,
+        videoEnabled: true,
+        pdfEnabled: true,
+        qrEnabled: true,
+        sessionTtlSeconds: 900,
+        workspaceDir: '/data/tools',
+        minFreeDiskBytes: 2_147_483_648,
+        jobTimeoutMs: 3_600_000,
+        uploadTimeoutMs: 900_000,
+        image: {
+          maxInputBytes: 20_971_520,
+          maxPixels: 60_000_000,
+          maxDimension: 12_000,
+          concurrency: 3,
+        },
+        video: {
+          maxInputBytes: 20_971_520,
+          maxDurationSeconds: 7_200,
+          concurrency: 1,
+          timeoutMs: 1_800_000,
+        },
+        pdf: {
+          maxInputBytes: 20_971_520,
+          maxPages: 50,
+          maxImages: 50,
+          renderDpi: 150,
+          concurrency: 1,
+          timeoutMs: 900_000,
+        },
+        qr: { maxInputBytes: 1_500, concurrency: 4, timeoutMs: 30_000 },
+        queue: { attempts: 2, backoffMs: 5_000, lockDurationMs: 60_000 },
+        orphanWorkspaceMaxAgeHours: 6,
+        maintenanceIntervalMs: 900_000,
+        maxActiveJobsPerUser: 2,
+        progressUpdateIntervalMs: 3_000,
+        healthPort: 3_003,
+      },
       health: { botPort: 3_001, workerPort: 3_002 },
       privacy: { storeFullSourceUrl: false },
       maintenance: { intervalMs: 900_000 },
@@ -514,5 +555,125 @@ describe('loadConfig', () => {
     it('rejects an out-of-range FFMPEG_CRF', () => {
       expect(() => loadConfig(env({ FFMPEG_CRF: '99' }))).toThrow(ConfigurationError);
     });
+  });
+});
+
+/**
+ * The tool ceilings that only make sense in relation to each other.
+ *
+ * Every one of these has the same failure shape if unchecked: the job is
+ * accepted, the work is paid for, and the rejection arrives at the end — which
+ * is the most expensive possible moment to discover a misconfiguration.
+ */
+describe('file-tool coherence', () => {
+  const on = { TOOLS_ENABLED: 'true' };
+
+  it('says nothing about tool settings while the tools are off', () => {
+    // A downloader-only deployment must not be refused startup over a ceiling
+    // it will never reach.
+    expect(() =>
+      loadConfig(env({ TOOLS_ENABLED: 'false', VIDEO_TOOL_MAX_MB: '4000' })),
+    ).not.toThrow();
+  });
+
+  it('boots on the shipped tool defaults once enabled', () => {
+    // The same regression the downloader already had: defaults that individually
+    // look fine and together refuse to start.
+    expect(() => loadConfig(env(on))).not.toThrow();
+  });
+
+  it('refuses an input ceiling above what the bot could ever download', () => {
+    // The public Bot API refuses `getFile` above 20 MB whatever the upload
+    // ceiling says, so a larger input limit promises to accept files the bot
+    // cannot collect.
+    expect(() => loadConfig(env({ ...on, VIDEO_TOOL_MAX_MB: '400' }))).toThrow(
+      /VIDEO_TOOL_MAX_MB=400 is above the 20 MB this deployment can download/,
+    );
+  });
+
+  it('does NOT compare an input ceiling against the upload ceiling', () => {
+    // A 500 MB video that yields a 5 MB MP3 is the entire point of the tool.
+    // Conflating the two limits would forbid exactly the useful case.
+    expect(() =>
+      loadConfig(
+        env({
+          ...on,
+          VIDEO_TOOL_MAX_MB: '500',
+          TELEGRAM_LOCAL_MODE: 'true',
+          TELEGRAM_API_ROOT: 'http://telegram-bot-api:8081',
+          MAX_DOWNLOAD_MB: '2000',
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it('leaves the dimension and pixel ceilings independent', () => {
+    // They guard different things: an absurd single side versus total decoded
+    // area. A 12000x2000 panorama is 24 megapixels and entirely reasonable,
+    // while 12000 squared is 144 — so requiring the square to fit would forbid
+    // ordinary configurations.
+    expect(() =>
+      loadConfig(
+        env({ ...on, IMAGE_TOOL_MAX_DIMENSION: '12000', IMAGE_TOOL_MAX_PIXELS: '60000000' }),
+      ),
+    ).not.toThrow();
+  });
+
+  it('allows a larger family ceiling once a local Bot API server raises the roof', () => {
+    // The ceiling is relative, not absolute: 400 MB is illegal on the public
+    // API and unremarkable against a local server.
+    expect(() =>
+      loadConfig(
+        env({
+          ...on,
+          VIDEO_TOOL_MAX_MB: '400',
+          TELEGRAM_LOCAL_MODE: 'true',
+          TELEGRAM_API_ROOT: 'http://telegram-bot-api:8081',
+          MAX_DOWNLOAD_MB: '2000',
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it('refuses a step timeout longer than the whole job budget', () => {
+    expect(() =>
+      loadConfig(env({ ...on, PDF_TOOL_TIMEOUT_MS: '7200000', TOOL_JOB_TIMEOUT_MS: '600000' })),
+    ).toThrow(/PDF_TOOL_TIMEOUT_MS=7200000 exceeds TOOL_JOB_TIMEOUT_MS/);
+  });
+
+  it('refuses a queue lock that outlives the work it protects', () => {
+    // BullMQ renews the lock at lockDuration/2 while the processor is alive, so
+    // it is meant to be far shorter than a step. One that outlives the work
+    // stops a genuinely stalled job from ever being reclaimed.
+    expect(() => loadConfig(env({ ...on, TOOL_QUEUE_LOCK_DURATION_MS: '1800000' }))).toThrow(
+      /not shorter than the longest tool step/,
+    );
+  });
+
+  it('refuses a render DPI whose own output would be rejected as an image', () => {
+    // "PDF to images" at 600 DPI produces pages larger than the image ceiling,
+    // so every rendered page fails — after the render is already paid for.
+    expect(() =>
+      loadConfig(env({ ...on, PDF_RENDER_DPI: '600', IMAGE_TOOL_MAX_PIXELS: '1000000' })),
+    ).toThrow(/PDF_RENDER_DPI=600 renders an A4 page/);
+  });
+
+  it('refuses to let the tools and the downloader share a workspace', () => {
+    // Both sweep their directory for orphans on a timer, so sharing one means
+    // each can delete the other's in-flight files.
+    expect(() =>
+      loadConfig(env({ ...on, TOOL_WORKSPACE_DIR: '/data/x', DOWNLOAD_DIR: '/data/x' })),
+    ).toThrow(/independent cleanup sweeps/);
+  });
+
+  it('reports every tool problem at once rather than only the first', () => {
+    let message = '';
+    try {
+      loadConfig(env({ ...on, VIDEO_TOOL_MAX_MB: '400', PDF_TOOL_MAX_MB: '300' }));
+    } catch (error: unknown) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain('VIDEO_TOOL_MAX_MB=400');
+    expect(message).toContain('PDF_TOOL_MAX_MB=300');
   });
 });

@@ -101,6 +101,73 @@ export interface FfmpegConfig {
   readonly crf: number;
 }
 
+/**
+ * The file tools: eight image/video/PDF/QR operations run by a separate worker.
+ *
+ * Grouped rather than flattened into `limits` because these ceilings answer a
+ * different question. The downloader's limits are about what Telegram will
+ * accept; these are about what one shared host can be asked to do for one user
+ * without starving everyone else.
+ */
+export interface ToolsConfig {
+  /**
+   * The master switch. Off by default: a deployment that only wants the
+   * downloader should not be running image and video processing, and should not
+   * be able to be broken by it.
+   */
+  readonly enabled: boolean;
+  /** Per-family switches, so one misbehaving family can be shed without the rest. */
+  readonly imageEnabled: boolean;
+  readonly videoEnabled: boolean;
+  readonly pdfEnabled: boolean;
+  readonly qrEnabled: boolean;
+
+  readonly sessionTtlSeconds: number;
+  readonly workspaceDir: string;
+  readonly minFreeDiskBytes: number;
+  readonly jobTimeoutMs: number;
+  readonly uploadTimeoutMs: number;
+
+  readonly image: {
+    readonly maxInputBytes: number;
+    /** Decompression-bomb guard: a small file can declare an enormous canvas. */
+    readonly maxPixels: number;
+    readonly maxDimension: number;
+    readonly concurrency: number;
+  };
+  readonly video: {
+    readonly maxInputBytes: number;
+    readonly maxDurationSeconds: number;
+    readonly concurrency: number;
+    readonly timeoutMs: number;
+  };
+  readonly pdf: {
+    readonly maxInputBytes: number;
+    readonly maxPages: number;
+    readonly maxImages: number;
+    readonly renderDpi: number;
+    readonly concurrency: number;
+    readonly timeoutMs: number;
+  };
+  readonly qr: {
+    readonly maxInputBytes: number;
+    readonly concurrency: number;
+    readonly timeoutMs: number;
+  };
+
+  readonly queue: {
+    readonly attempts: number;
+    readonly backoffMs: number;
+    readonly lockDurationMs: number;
+  };
+
+  readonly orphanWorkspaceMaxAgeHours: number;
+  readonly maintenanceIntervalMs: number;
+  readonly maxActiveJobsPerUser: number;
+  readonly progressUpdateIntervalMs: number;
+  readonly healthPort: number;
+}
+
 export interface HealthConfig {
   readonly botPort: number;
   readonly workerPort: number;
@@ -165,6 +232,7 @@ export interface AppConfig {
   readonly ffmpeg: FfmpegConfig;
   readonly cookies: CookieConfig;
   readonly extraction: ExtractionConfig;
+  readonly tools: ToolsConfig;
   readonly health: HealthConfig;
   readonly privacy: PrivacyConfig;
   readonly maintenance: MaintenanceConfig;
