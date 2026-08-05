@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { TOOL_JOB_SCHEMA_VERSION, expectedInputCount, parseToolJobPayload } from './job-payload.js';
+import type { ToolOperation } from './job-payload.js';
+import {
+  TOOL_JOB_SCHEMA_VERSION,
+  expectedInputCount,
+  parseToolJobPayload,
+  toStorableOperation,
+} from './job-payload.js';
 
 function payload(overrides: Record<string, unknown> = {}) {
   return {
@@ -57,8 +63,26 @@ describe('parseToolJobPayload', () => {
       [{ tool: 'video.extract_mp3', quality: '64' }, false],
       [{ tool: 'pdf.to_images', format: 'png', dpi: 150 }, true],
       [{ tool: 'pdf.to_images', format: 'png', dpi: 5_000 }, false],
-      [{ tool: 'qr.generate', payload: 'x', format: 'png', size: 512, errorCorrection: 'M' }, true],
-      [{ tool: 'qr.generate', payload: '', format: 'png', size: 512, errorCorrection: 'M' }, false],
+      [
+        {
+          tool: 'qr.generate',
+          content: { kind: 'text', text: 'x' },
+          format: 'png',
+          size: 512,
+          errorCorrection: 'M',
+        },
+        true,
+      ],
+      [
+        {
+          tool: 'qr.generate',
+          content: { kind: 'geo', latitude: 91, longitude: 0 },
+          format: 'png',
+          size: 512,
+          errorCorrection: 'M',
+        },
+        false,
+      ],
     ] as const;
 
     for (const [operation, valid] of cases) {
@@ -102,5 +126,67 @@ describe('expectedInputCount', () => {
     // QR is built from text. Accepting a file would be accepting something it
     // has no way to use.
     expect(expectedInputCount('qr.generate')).toEqual({ min: 0, max: 0 });
+  });
+});
+
+describe('toStorableOperation', () => {
+  const wifi = {
+    tool: 'qr.generate',
+    content: {
+      kind: 'wifi',
+      ssid: 'Babaee-Home',
+      password: 'hunter2-very-secret',
+      security: 'WPA',
+    },
+    format: 'png',
+    size: 512,
+    errorCorrection: 'M',
+  } as const satisfies ToolOperation;
+
+  it('keeps everything the user typed out of the QR row', () => {
+    // `tool_jobs` is an audit table with no expiry. A Wi-Fi password written
+    // there outlives the job, the chat and very probably the network.
+    const serialized = JSON.stringify(toStorableOperation(wifi));
+
+    expect(serialized).not.toContain('hunter2');
+    expect(serialized).not.toContain('Babaee-Home');
+  });
+
+  it('stores QR by allow-list, so a new content field cannot leak by default', () => {
+    // The bug this prevents is a future one: someone adds `note` to the vCard
+    // arm, a deny-list implementation does not know about it, and it starts
+    // being persisted with nobody noticing. Naming the safe keys means the
+    // failure mode of forgetting is omission, not disclosure.
+    expect(Object.keys(toStorableOperation(wifi)).sort()).toEqual([
+      'errorCorrection',
+      'format',
+      'kind',
+      'size',
+      'tool',
+    ]);
+  });
+
+  it('records WHICH kind of QR was made, which is not itself a secret', () => {
+    // Without it the row cannot answer "what did this job do", and the event
+    // trail exists precisely to answer that.
+    expect(toStorableOperation(wifi)).toMatchObject({ tool: 'qr.generate', kind: 'wifi' });
+  });
+
+  it('leaves every other tool intact, options and all', () => {
+    // These carry dimensions and quality settings, not personal data, and a row
+    // that has forgotten the DPI cannot explain what it produced.
+    const operation = { tool: 'pdf.to_images', format: 'png', dpi: 200 } as const;
+    expect(toStorableOperation(operation)).toEqual(operation);
+  });
+
+  it('produces something a jsonb column round-trips unchanged', () => {
+    const operation = {
+      tool: 'image.resize',
+      width: 1080,
+      height: 1350,
+      fit: 'cover',
+    } as const satisfies ToolOperation;
+    const stored: unknown = JSON.parse(JSON.stringify(toStorableOperation(operation)));
+    expect(stored).toEqual(operation);
   });
 });

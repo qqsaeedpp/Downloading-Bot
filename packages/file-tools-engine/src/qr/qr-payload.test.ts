@@ -1,5 +1,7 @@
+import type { QrContent, QrContentKind } from '@tgtools/tool-contracts';
 import { describe, expect, it } from 'vitest';
 import { ToolErrorCode, isToolError } from '../errors/tool-error.js';
+import type { QrInput } from './qr-payload.js';
 import {
   assertPayloadFits,
   buildQrPayload,
@@ -143,6 +145,38 @@ describe('buildQrPayload', () => {
   it('omits an absent vCard email rather than emitting an empty field', () => {
     const payload = buildQrPayload({ kind: 'vcard', name: 'Ali', phone: '+1' });
     expect(payload).not.toContain('EMAIL:');
+  });
+});
+
+describe('the wire contract and the builder', () => {
+  it('agree on every kind, in both directions', () => {
+    // Two halves of one feature living in two packages: the bot validates a
+    // `QrContent` and the worker hands it to `buildQrPayload` as a `QrInput`.
+    // Nothing else joins them, so a field renamed on one side type-checks in
+    // both packages and fails only at that single call site — at runtime, in
+    // production, for one tool.
+    //
+    // The `Record<QrContentKind, ...>` is what makes this exhaustive: adding a
+    // kind to the contract without teaching the builder about it stops
+    // compiling here rather than shipping.
+    const samples: Record<QrContentKind, QrContent> = {
+      text: { kind: 'text', text: 'سلام' },
+      url: { kind: 'url', url: 'example.com' },
+      wifi: { kind: 'wifi', ssid: 'Home', password: 'x', security: 'WPA', hidden: true },
+      phone: { kind: 'phone', phone: '+989123456789' },
+      email: { kind: 'email', email: 'a@b.test' },
+      geo: { kind: 'geo', latitude: 35.6892, longitude: 51.389 },
+      vcard: { kind: 'vcard', name: 'Ali', phone: '+1' },
+    };
+
+    for (const [kind, content] of Object.entries(samples)) {
+      // The assignment IS the assertion — `check-types` fails if the contract's
+      // inferred shape is not something the builder accepts. Actually building
+      // each payload then proves the builder can act on it rather than merely
+      // tolerate its type.
+      const input: QrInput = content;
+      expect(buildQrPayload(input).length, kind).toBeGreaterThan(0);
+    }
   });
 });
 

@@ -29,7 +29,11 @@ export type QrInput =
       readonly ssid: string;
       readonly password?: string | undefined;
       readonly security: WifiSecurity;
-      readonly hidden?: boolean;
+      // `| undefined` like its siblings above, not bare `boolean?`. Under
+      // `exactOptionalPropertyTypes` the two are different types, and the
+      // narrower one refuses the object Zod infers for the wire contract — which
+      // would break the assignability this and `QrContent` are meant to share.
+      readonly hidden?: boolean | undefined;
     }
   | { readonly kind: 'phone'; readonly phone: string }
   | { readonly kind: 'email'; readonly email: string }

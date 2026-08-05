@@ -18,10 +18,14 @@ export {
 } from './session.js';
 export type { ToolInputReference, ToolSession, ToolSessionState } from './session.js';
 
+export { QR_CONTENT_KIND_VALUES, QR_WIFI_SECURITY_VALUES, qrContentSchema } from './qr-input.js';
+export type { QrContent, QrContentKind, QrWifiSecurity } from './qr-input.js';
+
 export {
   TOOL_JOB_SCHEMA_VERSION,
   expectedInputCount,
   parseToolJobPayload,
+  toStorableOperation,
   toolJobPayload,
   toolJobPayloadSchema,
   toolOperationSchema,

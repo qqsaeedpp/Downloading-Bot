@@ -1,5 +1,6 @@
 import { TOOL_KEY_VALUES } from '@tgtools/shared';
 import { z } from 'zod';
+import { qrContentSchema } from './qr-input.js';
 import { toolInputReferenceSchema } from './session.js';
 
 /**
@@ -71,13 +72,17 @@ export const toolOperationSchema = z.discriminatedUnion('tool', [
   z.object({
     tool: z.literal('qr.generate'),
     /**
-     * The payload STRING, already built and escaped by the bot.
+     * What the code should say, STRUCTURED — see `qr-input.ts` for why it is not
+     * a finished string.
      *
-     * Deliberately opaque here: it can be a Wi-Fi password or a private URL, so
-     * it is never persisted to the job row and never logged. It exists in the
-     * queue for as long as the job takes and nowhere else.
+     * Named `content` rather than `input` so it cannot be confused with the
+     * `inputs` array below, which is files. QR takes no file at all.
+     *
+     * Deliberately secret: it can be a Wi-Fi password, a private URL or a home
+     * address, so it is never persisted to the job row and never logged. It
+     * exists in the queue for as long as the job takes and nowhere else.
      */
-    payload: z.string().min(1),
+    content: qrContentSchema,
     format: z.enum(['png', 'svg']),
     size: z.number().int().min(128).max(2_048),
     errorCorrection: z.enum(['M', 'Q', 'H']),
@@ -153,6 +158,35 @@ export function parseToolJobPayload(value: unknown): ToolJobParseSuccess | ToolJ
         ? 'payload did not match the schema'
         : `${first.path.join('.')}: ${first.message}`,
   };
+}
+
+/**
+ * The form of an operation that may be written to `tool_jobs.operation_payload`.
+ *
+ * That column is an audit record with no expiry: it outlives the job, the chat
+ * and — for a Wi-Fi key — very probably the network. Every tool but QR carries
+ * only dimensions, formats and quality settings, which are exactly what the row
+ * exists to remember. QR carries whatever the user typed.
+ *
+ * So QR is reduced to an ALLOW-LIST of its four non-content fields rather than
+ * having its content deleted. The difference matters the day someone adds a
+ * field to the vCard arm: with a deny-list it would silently start being
+ * persisted, and with this the failure mode of forgetting is a missing column
+ * value rather than a disclosed one.
+ */
+export function toStorableOperation(operation: ToolOperation): Readonly<Record<string, unknown>> {
+  if (operation.tool === 'qr.generate') {
+    return {
+      tool: operation.tool,
+      // The KIND is not itself a secret, and without it the row cannot answer
+      // "what did this job do" — which is the whole point of keeping it.
+      kind: operation.content.kind,
+      format: operation.format,
+      size: operation.size,
+      errorCorrection: operation.errorCorrection,
+    };
+  }
+  return { ...operation };
 }
 
 /**
