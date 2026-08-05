@@ -114,3 +114,34 @@ export type {
   QrOutputFormat,
   QrResult,
 } from './qr/qr-generator.js';
+
+export {
+  PAGE_SIZES,
+  PDF_PAGE_MODE_VALUES,
+  assertUsablePdf,
+  buildPdfInfoArgs,
+  buildPdftocairoArgs,
+  pageFileName,
+  pageNumberPadding,
+  parsePdfInfo,
+  planImagePlacement,
+  resolvePageRange,
+} from './pdf/pdf-plan.js';
+export type {
+  ImagePlacement,
+  PageRange,
+  PageSizeKey,
+  PdfInfo,
+  PdfLimits,
+  PdfPageMode,
+  RenderOptions,
+} from './pdf/pdf-plan.js';
+
+export { PopplerPdfProcessor } from './pdf/pdf-processor.js';
+export type {
+  ImagesToPdfOptions,
+  PdfBuildResult,
+  PdfProcessorOptions,
+  PdfRenderOptions,
+  PdfRenderResult,
+} from './pdf/pdf-processor.js';
