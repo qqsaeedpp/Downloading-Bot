@@ -27,6 +27,9 @@ export function registerFeatures(container: BotContainer): {
       maxUploadMegabytes: Math.floor(bytesToMegabytes(container.config.limits.maxUploadBytes)),
       supportedPlatforms,
     }),
+    // Before the downloader: its link handler is a catch-all on text, and a
+    // typed QR payload would otherwise be read as a URL to download.
+    ...(container.tools === undefined ? [] : [container.tools]),
     container.downloader.botFeature,
   ];
 

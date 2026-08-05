@@ -6,14 +6,23 @@ import { createDownloaderEngine } from '@tgtools/downloader-engine';
 import type { DownloaderFeature } from '@tgtools/feature-downloader';
 import { RedisCancellationBus, createDownloaderFeature } from '@tgtools/feature-downloader';
 import type { DownloadJobPayload } from '@tgtools/feature-downloader';
+import type { ToolJobPayload } from '@tgtools/tool-contracts';
+import {
+  BullMqToolQueue,
+  DrizzleToolJobRepository,
+  QUEUE_FOR_FAMILY,
+  RedisToolSessionStore,
+  RequestToolJobUseCase,
+  createToolsFeature,
+} from '@tgtools/feature-tools';
 import type { UserRepository } from '@tgtools/feature-users';
 import { DrizzleUserRepository, RegisterOrUpdateUserUseCase } from '@tgtools/feature-users';
 import { createLogger } from '@tgtools/logger';
 import type { RedisHandle } from '@tgtools/queue';
 import { QueueName, createQueue, createRedis } from '@tgtools/queue';
-import type { Clock, IdGenerator, Logger } from '@tgtools/shared';
+import type { Clock, IdGenerator, Logger, ToolFamily } from '@tgtools/shared';
 import { CryptoIdGenerator, SystemClock } from '@tgtools/shared';
-import type { AppContext } from '@tgtools/telegram';
+import type { AppContext, BotFeature } from '@tgtools/telegram';
 import { createBot } from '@tgtools/telegram';
 import type { Queue } from 'bullmq';
 import type { Bot } from 'grammy';
@@ -35,6 +44,14 @@ export interface BotContainer {
   readonly users: UserRepository;
   readonly registerOrUpdateUser: RegisterOrUpdateUserUseCase;
   readonly downloader: DownloaderFeature;
+  /**
+   * Absent when `TOOLS_ENABLED` is false.
+   *
+   * Not built at all rather than built and hidden: constructing it opens four
+   * BullMQ queues against Redis, and a downloader-only deployment should not
+   * pay for a feature it has switched off.
+   */
+  readonly tools: BotFeature | undefined;
 }
 
 /**
@@ -124,5 +141,57 @@ export function createBotContainer(config: AppConfig): BotContainer {
     users,
     registerOrUpdateUser,
     downloader,
+    tools: createTools(config, redis, database, clock, ids, logger),
   };
+}
+
+/**
+ * The tools feature, or nothing.
+ *
+ * The queues are opened here and only here: four `Queue` objects each hold a
+ * Redis connection, so a deployment with `TOOLS_ENABLED=false` should not be
+ * paying for them. Returning `undefined` rather than a disabled feature keeps
+ * that decision in one place instead of in every handler.
+ */
+function createTools(
+  config: AppConfig,
+  redis: RedisHandle,
+  database: DatabaseHandle,
+  clock: Clock,
+  ids: IdGenerator,
+  logger: Logger,
+): BotFeature | undefined {
+  if (!config.tools.enabled) return undefined;
+
+  const queues = Object.fromEntries(
+    Object.entries(QUEUE_FOR_FAMILY).map(([family, name]) => [
+      family,
+      createQueue<ToolJobPayload>({ name, connection: redis.client, config }),
+    ]),
+  ) as Record<ToolFamily, Queue<ToolJobPayload>>;
+
+  const repository = new DrizzleToolJobRepository(database.db, clock, ids);
+
+  return createToolsFeature({
+    config,
+    sessions: new RedisToolSessionStore({
+      redis: redis.client,
+      // Scopes the key so a staging bot beside production — which is how this
+      // is usually deployed — cannot read the other's conversations.
+      botId: config.telegram.botToken.split(':')[0] ?? 'unknown',
+      ttlSeconds: config.tools.sessionTtlSeconds,
+    }),
+    requestJob: new RequestToolJobUseCase({
+      repository,
+      queue: new BullMqToolQueue(queues),
+      ids,
+      clock,
+      logger,
+      maxActiveJobsPerUser: config.tools.maxActiveJobsPerUser,
+      jobTimeoutMs: config.tools.jobTimeoutMs,
+    }),
+    ids,
+    clock,
+    logger,
+  });
 }

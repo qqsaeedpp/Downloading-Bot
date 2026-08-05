@@ -17,11 +17,13 @@
     "@tgtools/feature-downloader": "*",
     "@tgtools/feature-help": "*",
     "@tgtools/feature-start": "*",
+    "@tgtools/feature-tools": "*",
     "@tgtools/feature-users": "*",
     "@tgtools/logger": "*",
     "@tgtools/queue": "*",
     "@tgtools/shared": "*",
     "@tgtools/telegram": "*",
+    "@tgtools/tool-contracts": "*",
     "grammy": "^1.45.1",
     "ioredis": "^5.9.0"
   },
